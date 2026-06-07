@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Skapa nytt projekt - RunSpace Studio</title>
+    <style>
+        :root {
+            --vs-dark: #1e1e1e; --vs-panel: #2b2b2b; --vs-border: #3f3f46;
+            --vs-accent: #007acc; --vs-text: #cccccc;
+        }
+
+        body { 
+            background: var(--vs-dark); color: var(--vs-text); 
+            font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh;
+        }
+
+        /* Vänster sida: Senaste projekt */
+        .sidebar-recent { width: 350px; padding: 40px; background: #252526; border-right: 1px solid var(--vs-border); }
+        h1 { font-weight: 300; font-size: 32px; margin-bottom: 30px; color: #fff; }
+        
+        /* Höger sida: Mallar */
+        .main-content { flex: 1; padding: 40px; overflow-y: auto; }
+        .search-box { width: 100%; background: #333; border: 1px solid #555; color: #fff; padding: 10px; margin-bottom: 20px; outline: none; }
+        .search-box:focus { border-color: var(--vs-accent); }
+
+        .template-list { display: flex; flex-direction: column; gap: 10px; }
+        .template-item { 
+            background: var(--vs-panel); border: 1px solid transparent; 
+            padding: 15px; cursor: pointer; display: flex; align-items: center; gap: 20px;
+        }
+        .template-item:hover { background: #3e3e42; border-color: var(--vs-accent); }
+        .template-icon { width: 40px; height: 40px; background: #512bd4; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #fff; border-radius: 4px; }
+
+        .template-info h3 { margin: 0; font-size: 14px; color: #fff; }
+        .template-info p { margin: 5px 0 0; font-size: 11px; color: #aaa; }
+
+        .btn-next { 
+            position: fixed; bottom: 40px; right: 40px; 
+            background: var(--vs-accent); color: white; border: none; 
+            padding: 10px 40px; cursor: pointer; font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+<div class="sidebar-recent">
+    <h1>RunSpace Studio</h1>
+    <h3>Öppna senaste</h3>
+    <div id="recent-list" style="font-size: 12px; color: var(--vs-accent); cursor: pointer;">
+        </div>
+    <br><br>
+    <div style="font-size: 13px; color: #aaa;">
+        Kom igång genom att välja en mall till höger för att starta ditt C#-äventyr.
+    </div>
+</div>
+
+<div class="main-content">
+    <h2>Skapa ett nytt projekt</h2>
+    <input type="text" class="search-box" placeholder="Sök efter mallar (t.ex. WinForms, Console)">
+    
+    <div class="template-list">
+        <div class="template-item" onclick="selectTemplate('Windows Forms App')">
+            <div class="template-icon">C#</div>
+            <div class="template-info">
+                <h3>Windows Forms App</h3>
+                <p>Ett projekt för att skapa en applikation med ett Windows-användargränssnitt (WinForms).</p>
+                <div style="font-size: 10px; margin-top: 5px; color: #007acc;">C# | Windows | Desktop</div>
+            </div>
+        </div>
+
+        <div class="template-item" onclick="selectTemplate('Console App')">
+            <div class="template-icon" style="background: #2b2b2b; border: 1px solid #512bd4;">C#</div>
+            <div class="template-info">
+                <h3>Console App</h3>
+                <p>Ett projekt för att skapa en kommandoradsapplikation som kan köras i terminalen.</p>
+                <div style="font-size: 10px; margin-top: 5px; color: #007acc;">C# | Linux | macOS | Windows</div>
+            </div>
+        </div>
+
+        <div class="template-item" onclick="selectTemplate('Class Library')">
+            <div class="template-icon" style="background: #333;">C#</div>
+            <div class="template-info">
+                <h3>Class Library (.NET Standard)</h3>
+                <p>Ett projekt för att skapa ett klassbibliotek (.dll) som kan delas mellan olika projekt.</p>
+            </div>
+        </div>
+    </div>
+
+    <button class="btn-next" id="next-btn" style="display:none;" onclick="createProject()">Nästa</button>
+</div>
+
+<script>
+    let selectedTemplateName = "";
+
+    function selectTemplate(name) {
+        selectedTemplateName = name;
+        document.getElementById('next-btn').style.display = 'block';
+        
+        // Markera valt objekt visuellt
+        const items = document.querySelectorAll('.template-item');
+        items.forEach(i => i.style.borderColor = 'transparent');
+        event.currentTarget.style.borderColor = '#007acc';
+    }
+
+    function createProject() {
+        const projectName = prompt("Ange ett namn för ditt projekt:", "MyProject1");
+        if (projectName) {
+            const projects = JSON.parse(localStorage.getItem('projects')) || [];
+            const newProject = {
+                name: projectName,
+                template: selectedTemplateName,
+                date: new Date().toLocaleDateString()
+            };
+            projects.push(newProject);
+            localStorage.setItem('projects', JSON.stringify(projects));
+            
+            // Skicka användaren till designern
+            window.location.href = 'designer.html';
+        }
+    }
+
+    // Ladda senaste projekt i sidomenyn
+    window.onload = () => {
+        const projects = JSON.parse(localStorage.getItem('projects')) || [];
+        const recentDiv = document.getElementById('recent-list');
+        if (projects.length > 0) {
+            recentDiv.innerHTML = projects.slice(-3).reverse().map(p => 
+                `<div onclick="window.location.href='designer.html'" style="margin-bottom:10px;">📄 ${p.name}</div>`
+            ).join('');
+        } else {
+            recentDiv.innerHTML = "Inga senaste projekt";
+        }
+    };
+</script>
+
+  <script src="/terminal.js"></script>
+</body>
+</html>

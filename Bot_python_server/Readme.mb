@@ -1,0 +1,102 @@
+# RunSpace Bot SDK
+
+Officiellt Python-bibliotek för att bygga bots på RunSpace.
+
+## Installation
+
+```bash
+pip install requests
+git clone https://github.com/runspace/runspace-py
+cd runspace-py
+pip install -e .
+```
+
+## Snabbstart
+
+1. Gå till din server på RunSpace
+2. Klicka på ⚙️ bredvid servernamnet
+3. Välj **Bot** och generera ett token
+4. Kopiera ditt **Server ID**
+
+```python
+from runspace import RunSpaceBot
+
+bot = RunSpaceBot(
+    token="ditt-token",
+    server_id="ditt-server-id"
+)
+
+@bot.on_message
+def handle(msg):
+    if msg.text == "!ping":
+        bot.send(msg.channel_id, "Pong! 🏓")
+
+bot.run()
+```
+
+## Funktioner
+
+### Skicka meddelanden
+```python
+bot.send(channel_id, "Hej världen!")
+```
+
+### Kicka användare
+```python
+bot.kick("användarnamn")
+```
+
+### Blacklista IP
+```python
+bot.ban_ip("1.2.3.4")
+bot.unban_ip("1.2.3.4")
+```
+
+### Ordfilter (auto-delete)
+```python
+bot.add_word_filter("spam")
+```
+
+### Sätt roll
+```python
+bot.set_role("användarnamn", "moderator")
+```
+
+### Hämta medlemmar
+```python
+members = bot.get_members()
+for m in members:
+    print(m.username, m.role)
+```
+
+## Event handlers
+
+```python
+@bot.on_ready
+def ready(server):
+    print(f"Bot igång på: {server.name}")
+
+@bot.on_message
+def message(msg):
+    print(f"{msg.author}: {msg.text}")
+
+@bot.on_member_join
+def join(member):
+    bot.send("allmant", f"Välkommen @{member.username}!")
+
+@bot.on_member_leave
+def leave(member):
+    print(f"{member.username} lämnade")
+```
+
+## Message-objekt
+
+| Fält | Typ | Beskrivning |
+|------|-----|-------------|
+| `id` | int | Meddelande-ID |
+| `text` | str | Meddelandetext |
+| `author` | str | Användarnamn |
+| `channel_id` | str | Kanal-ID |
+| `server_id` | str | Server-ID |
+| `timestamp` | datetime | Tid |
+| `ip` | str | Avsändarens IP (om tillgänglig) |

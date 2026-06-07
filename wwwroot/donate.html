@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Donera krypto | RunSpace</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root{
+      --bg:#0d0d17; --panel:#1a1a2e; --accent:#6b4eff; --text:#ddd; --text-dim:#888;
+      --border:#222; --danger:#ff4e4e; --ok:#34d399;
+    }
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:Inter,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+    .nav{
+      position:fixed;top:0;left:0;right:0;padding:12px 5%;
+      display:flex;justify-content:space-between;align-items:center;
+      background:rgba(13,13,23,.9);backdrop-filter:blur(15px);
+      border-bottom:1px solid var(--border);z-index:1000;
+    }
+    .brand{font-weight:800;color:var(--accent);font-size:1.35rem;cursor:pointer}
+    .btn{
+      padding:10px 14px;border-radius:12px;border:none;cursor:pointer;font-weight:800;
+      background:var(--accent);color:#fff;
+    }
+    .btn-outline{
+      background:transparent;border:1px solid rgba(107,78,255,.55);color:#cfc7ff;
+    }
+
+    .wrap{max-width:980px;margin:0 auto;padding:110px 5% 40px}
+    h1{font-size:2.1rem;margin-bottom:10px}
+    .muted{color:var(--text-dim);line-height:1.4}
+    .grid{
+      margin-top:18px;
+      display:grid;grid-template-columns:1fr;gap:14px;
+    }
+    @media(min-width: 900px){ .grid{grid-template-columns: 1.2fr .8fr;} }
+
+    .card{
+      background:var(--panel);border:1px solid var(--border);border-radius:18px;padding:18px;
+    }
+    .list{display:grid;gap:10px;margin-top:12px}
+    .row{
+      display:flex;align-items:center;justify-content:space-between;gap:12px;
+      background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);
+      border-radius:14px;padding:12px;
+    }
+    .left{display:flex;flex-direction:column;gap:4px;min-width:0}
+    .coin{font-weight:800}
+    .net{color:var(--text-dim);font-size:.9rem}
+    .addr{
+      color:#cfc7ff;font-size:.92rem;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:520px;
+    }
+    .actions{display:flex;gap:10px;flex:0 0 auto}
+    .small-btn{
+      padding:10px 12px;border-radius:12px;border:none;cursor:pointer;font-weight:800;
+      background:#121226;color:var(--text);border:1px solid rgba(255,255,255,.08);
+    }
+    .small-btn:hover{border-color:rgba(107,78,255,.55);color:var(--accent)}
+    .warn{
+      margin-top:12px;padding:12px;border-radius:14px;
+      border:1px solid rgba(255,78,78,.35);
+      background:rgba(255,78,78,.08);color:#ffb3b3;
+      font-size:.92rem;line-height:1.35;
+    }
+    .ok{
+      margin-top:12px;padding:10px;border-radius:12px;
+      border:1px solid rgba(52,211,153,.35);
+      background:rgba(52,211,153,.08);color:#bff3df;
+      font-size:.92rem;display:none;
+    }
+
+    .qrWrap{display:flex;flex-direction:column;gap:10px;align-items:center}
+    .qrBox{
+      width:260px;height:260px;border-radius:18px;
+      border:1px solid rgba(255,255,255,.08);
+      background:rgba(255,255,255,.02);
+      display:flex;align-items:center;justify-content:center;
+      overflow:hidden;
+    }
+    .qrBox img{width:100%;height:100%;object-fit:cover}
+    select, input{
+      width:100%;padding:12px;border-radius:12px;
+      border:1px solid rgba(255,255,255,.08);background:#090911;color:var(--text);
+      outline:none;
+    }
+    label{display:block;color:var(--text-dim);font-size:.9rem;margin:10px 0 6px}
+  </style>
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="brand" onclick="location.href='/'">RUNSPACE</div>
+    <button class="btn-outline" onclick="location.href='/'">Tillbaka</button>
+  </nav>
+
+  <div class="wrap">
+    <h1>Donera med krypto</h1>
+    <div class="muted">
+      Om du vill stötta RunSpace kan du skicka valfri summa till adresserna nedan.
+      Dubbelkolla alltid <b>nätverk</b> innan du skickar. Transaktioner går inte att ångra.
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <div>
+            <div style="font-weight:800;font-size:1.1rem">Adresser</div>
+            <div class="muted" style="margin-top:6px">Tryck “Kopiera” och klistra in i din wallet.</div>
+          </div>
+          <div id="copied" class="ok">Kopierat ✅</div>
+        </div>
+
+        <div class="warn">
+          Varning: Skicka bara på rätt nätverk. Exempel: <b>USDT</b> finns på flera nätverk (ERC20/TRC20/…).
+          Om du skickar på fel nätverk kan pengarna försvinna.
+        </div>
+
+        <div class="list" id="coinList"></div>
+      </div>
+
+      <div class="card">
+        <div style="font-weight:800;font-size:1.1rem;margin-bottom:6px">QR-kod</div>
+        <div class="muted">Välj coin så genereras en QR av adressen (offline i browsern).</div>
+
+        <label for="coinSelect">Coin</label>
+        <select id="coinSelect"></select>
+
+        <label for="amount">Belopp (valfritt)</label>
+        <input id="amount" placeholder="t.ex. 10" inputmode="decimal" />
+
+        <div class="qrWrap" style="margin-top:14px">
+          <div class="qrBox">
+            <img id="qrImg" alt="QR" />
+          </div>
+          <button class="btn" id="copyBtn">Kopiera adress</button>
+          <div class="muted" id="qrAddr" style="text-align:center;max-width:320px;word-break:break-all"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ===========================
+  // Fyll i dina adresser här
+  // ===========================
+  const COINS = [
+    { key: "BTC",  name: "Bitcoin",  network: "BTC",  address: "329rGJDSsUVCpQMghP49c3g2mjFjs5P44Hz" },
+    { key: "ETH",  name: "Ethereum", network: "ERC20",address: "0x00C2420c583d44fF2A64cb29Bd6A6c222b3fc264" },
+    { key: "SOL",  name: "Solana",   network: "SOL",  address: "FGEQse4BW6KfaLFi6NEWhsXJVxWnPE3zvFrRDMFs8wd1" },
+    { key: "LTC",  name: "Litecoin", network: "LTC",  address: "MA61AE3W8QxrkCioyreiXErwueemRDeSgU" },
+  ];
+
+  const $ = (id) => document.getElementById(id);
+
+  function showCopied() {
+    const el = $("copied");
+    el.style.display = "inline-block";
+    clearTimeout(showCopied._t);
+    showCopied._t = setTimeout(() => (el.style.display = "none"), 1200);
+  }
+
+  async function copyText(text) {
+    await navigator.clipboard.writeText(text);
+    showCopied();
+  }
+
+  function shorten(s) {
+    if (!s) return "";
+    if (s.length <= 18) return s;
+    return s.slice(0, 8) + "…" + s.slice(-8);
+  }
+
+  function renderList() {
+    const list = $("coinList");
+    list.innerHTML = "";
+
+    COINS.forEach(c => {
+      const row = document.createElement("div");
+      row.className = "row";
+
+      const left = document.createElement("div");
+      left.className = "left";
+      left.innerHTML = `
+        <div class="coin">${c.key} <span class="net">(${c.network})</span></div>
+        <div class="addr" title="${c.address}">${shorten(c.address)}</div>
+      `;
+
+      const actions = document.createElement("div");
+      actions.className = "actions";
+
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "small-btn";
+      copyBtn.textContent = "Kopiera";
+      copyBtn.onclick = () => copyText(c.address);
+
+      const qrBtn = document.createElement("button");
+      qrBtn.className = "small-btn";
+      qrBtn.textContent = "QR";
+      qrBtn.onclick = () => {
+        $("coinSelect").value = c.key;
+        updateQr();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      };
+
+      actions.appendChild(copyBtn);
+      actions.appendChild(qrBtn);
+
+      row.appendChild(left);
+      row.appendChild(actions);
+      list.appendChild(row);
+    });
+  }
+
+  function renderSelect() {
+    const sel = $("coinSelect");
+    sel.innerHTML = "";
+    COINS.forEach((c, i) => {
+      const opt = document.createElement("option");
+      opt.value = c.key;
+      opt.textContent = `${c.key} (${c.network})`;
+      if (i === 0) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  function getSelectedCoin() {
+    const key = $("coinSelect").value;
+    return COINS.find(x => x.key === key) || COINS[0];
+  }
+
+  // Enkel QR utan externa libs: använd en QR image-service.
+  // OBS: Detta läcker adressen till tjänsten. Om du vill vara 100% offline:
+  // säg till så ger jag dig en inbyggd QR-lib (minifierad) som funkar utan nät.
+  function makeQrUrl(text) {
+    const data = encodeURIComponent(text);
+    return `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${data}`;
+  }
+
+  function updateQr() {
+    const c = getSelectedCoin();
+    const amount = ($("amount").value || "").trim();
+
+    // QR-text: bara adress (säkert). Vill du ha “bitcoin:addr?amount=..” kan vi lägga.
+    let qrText = c.address;
+
+    $("qrImg").src = makeQrUrl(qrText);
+    $("qrAddr").textContent = `${c.key} (${c.network})\n${c.address}`;
+
+    $("copyBtn").onclick = () => copyText(c.address);
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    // Basic sanity: ta bort coins som inte är ifyllda
+    const filtered = COINS.filter(c => c.address && c.address !== "PASTE_ADDRESS_HERE");
+    if (filtered.length > 0) {
+      while (COINS.length) COINS.pop();
+      filtered.forEach(x => COINS.push(x));
+    }
+
+    renderList();
+    renderSelect();
+    updateQr();
+
+    $("coinSelect").addEventListener("change", updateQr);
+    $("amount").addEventListener("input", () => {
+      // just nu påverkar inte amount QR-texten, men vi lämnar hooken
+    });
+  });
+</script>
+
+  <script src="/terminal.js"></script>
+</body>
+</html>

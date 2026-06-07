@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sponsors - RunSpace</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0a0f1a;--bg2:#111827;--bg3:#1a2236;--bg4:#222d42;
+  --accent:#3b82f6;--accent-hover:#2563eb;--accent-glow:rgba(59,130,246,.15);
+  --text:#e2e8f0;--text-dim:#94a3b8;--text-bright:#f8fafc;
+  --border:#1e293b;--border-hover:#334155;
+  --danger:#ef4444;--success:#22c55e;
+  --radius:10px;--radius-lg:14px;
+}
+html{scroll-behavior:smooth}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;line-height:1.6}
+a{color:var(--accent);text-decoration:none;transition:color .2s}a:hover{color:var(--accent-hover)}
+.sidebar{position:fixed;left:0;top:0;bottom:0;width:220px;background:var(--bg2);border-right:1px solid var(--border);padding:20px 0;display:flex;flex-direction:column;z-index:100;overflow-y:auto}
+.sidebar-logo{padding:0 20px 20px;border-bottom:1px solid var(--border);margin-bottom:12px}
+.sidebar-logo h2{font-size:1.25rem;color:var(--text-bright);font-weight:700;letter-spacing:-.02em}
+.sidebar-logo span{color:var(--accent)}
+.nav-group{padding:8px 0}
+.nav-group-title{font-size:.65rem;text-transform:uppercase;letter-spacing:.1em;color:var(--text-dim);padding:4px 20px 6px;font-weight:600}
+.nav-link{display:flex;align-items:center;gap:10px;padding:8px 20px;font-size:.85rem;color:var(--text-dim);transition:all .2s;border-left:3px solid transparent;cursor:pointer}
+.nav-link:hover{color:var(--text-bright);background:rgba(255,255,255,.03)}
+.nav-link.active{color:var(--accent);border-left-color:var(--accent);background:var(--accent-glow)}
+.nav-link svg{width:16px;height:16px;flex-shrink:0;opacity:.7}.nav-link.active svg{opacity:1}
+.main{margin-left:220px;min-height:100vh}
+.page-header{padding:40px 48px 32px;background:linear-gradient(180deg,var(--bg2) 0%,var(--bg) 100%);border-bottom:1px solid var(--border);position:relative}
+.page-header h1{font-size:2rem;font-weight:800;color:var(--text-bright);letter-spacing:-.03em;margin-bottom:6px}
+.page-header p{color:var(--text-dim);font-size:.95rem;max-width:540px}
+.content{padding:32px 48px 60px}
+.tabs{display:flex;gap:4px;margin-bottom:24px;background:var(--bg2);border-radius:var(--radius);padding:4px;width:fit-content}
+.tab-btn{padding:8px 20px;border-radius:8px;border:none;background:transparent;color:var(--text-dim);font-size:.85rem;font-weight:600;cursor:pointer;transition:all .2s}
+.tab-btn.active{background:var(--accent);color:#fff}
+.tab-btn:hover:not(.active){color:var(--text-bright);background:rgba(255,255,255,.05)}
+.tab-content{display:none}.tab-content.active{display:block}
+
+/* Search */
+.search-wrap{margin-bottom:24px;max-width:400px;position:relative}
+.search-wrap svg{position:absolute;left:14px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:var(--text-dim);pointer-events:none}
+.search-wrap input{width:100%;padding:10px 14px 10px 40px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.9rem;font-family:inherit;transition:border-color .2s}
+.search-wrap input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.search-wrap input::placeholder{color:var(--text-dim);opacity:.5}
+
+/* Cards */
+.sponsors-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px}
+.sponsor-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px 24px;transition:all .3s ease;position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:center;text-align:center}
+.sponsor-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;opacity:0;transition:opacity .3s}
+.sponsor-card:hover{border-color:var(--border-hover);transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,.3)}
+.sponsor-card:hover::before{opacity:1}
+.sponsor-card[data-platform="tiktok"]::before{background:#ff0050}
+.sponsor-card[data-platform="twitter"]::before{background:#1da1f2}
+.sponsor-card[data-platform="twitch"]::before{background:#9146ff}
+.sponsor-card[data-platform="discord"]::before{background:#5865f2}
+.sponsor-card[data-platform="custom"]::before{background:var(--accent)}
+.sponsor-icon{width:64px;height:64px;border-radius:16px;display:flex;align-items:center;justify-content:center;margin-bottom:16px}
+.sponsor-icon svg{width:32px;height:32px}
+.sponsor-icon img{width:100%;height:100%;object-fit:contain;border-radius:12px}
+.sponsor-icon.tiktok{background:rgba(255,0,80,.12)}.sponsor-icon.tiktok svg{fill:#ff0050}
+.sponsor-icon.twitter{background:rgba(29,161,242,.12)}.sponsor-icon.twitter svg{fill:#1da1f2}
+.sponsor-icon.twitch{background:rgba(145,70,255,.12)}.sponsor-icon.twitch svg{fill:#9146ff}
+.sponsor-icon.discord{background:rgba(88,101,242,.12)}.sponsor-icon.discord svg{fill:#5865f2}
+.sponsor-icon.custom{background:var(--bg3)}
+.sponsor-name{font-size:1.1rem;font-weight:700;color:var(--text-bright);margin-bottom:4px}
+.sponsor-handle{font-size:.85rem;color:var(--text-dim);margin-bottom:16px}
+.sponsor-link{display:inline-flex;align-items:center;gap:6px;font-size:.8rem;font-weight:600;padding:8px 18px;border-radius:8px;transition:all .2s}
+.sponsor-link:hover{transform:translateY(-1px)}
+.sponsor-link[data-platform="tiktok"]{background:rgba(255,0,80,.1);color:#ff0050}.sponsor-link[data-platform="tiktok"]:hover{background:rgba(255,0,80,.2)}
+.sponsor-link[data-platform="twitter"]{background:rgba(29,161,242,.1);color:#1da1f2}.sponsor-link[data-platform="twitter"]:hover{background:rgba(29,161,242,.2)}
+.sponsor-link[data-platform="twitch"]{background:rgba(145,70,255,.1);color:#9146ff}.sponsor-link[data-platform="twitch"]:hover{background:rgba(145,70,255,.2)}
+.sponsor-link[data-platform="discord"]{background:rgba(88,101,242,.1);color:#5865f2}.sponsor-link[data-platform="discord"]:hover{background:rgba(88,101,242,.2)}
+.sponsor-link[data-platform="custom"]{background:var(--accent-glow);color:var(--accent)}.sponsor-link[data-platform="custom"]:hover{background:rgba(59,130,246,.2)}
+.no-results{text-align:center;padding:40px 20px;color:var(--text-dim);font-size:.9rem}
+.empty-state{text-align:center;padding:60px 20px;color:var(--text-dim)}
+.empty-state svg{width:48px;height:48px;margin-bottom:16px;opacity:.4}
+.empty-state p{font-size:.95rem}
+
+/* Admin */
+.admin-form{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:28px;max-width:520px;margin-bottom:32px}
+.admin-form h3{font-size:1rem;font-weight:700;color:var(--text-bright);margin-bottom:20px;display:flex;align-items:center;gap:8px}
+.form-row{margin-bottom:16px}
+.form-row label{display:block;font-size:.78rem;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.form-row input,.form-row select{width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:.9rem;font-family:inherit;transition:border-color .2s}
+.form-row select{cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center}
+.form-row select option{background:var(--bg2);color:var(--text)}
+.form-row input:focus,.form-row select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.form-row input::placeholder{color:var(--text-dim);opacity:.5}
+.form-row .file-input-wrap input[type="file"]{padding:8px;background:var(--bg3);cursor:pointer}
+.form-row .file-input-wrap input[type="file"]::file-selector-button{background:var(--accent);color:#fff;border:none;padding:6px 14px;border-radius:6px;font-size:.8rem;font-weight:600;cursor:pointer;margin-right:10px;transition:background .2s}
+.form-row .file-input-wrap input[type="file"]::file-selector-button:hover{background:var(--accent-hover)}
+.logo-row{display:none}.logo-row.visible{display:block}
+.btn-row{display:flex;gap:10px;margin-top:20px}
+.btn{padding:10px 22px;border-radius:8px;border:none;font-size:.85rem;font-weight:600;cursor:pointer;transition:all .2s;display:inline-flex;align-items:center;gap:6px}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent-hover);transform:translateY(-1px)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn-secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border)}.btn-secondary:hover{border-color:var(--border-hover);background:var(--bg4)}
+.admin-list{max-width:520px}
+.admin-list h3{font-size:1rem;font-weight:700;color:var(--text-bright);margin-bottom:16px}
+.admin-item{display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;transition:border-color .2s}
+.admin-item:hover{border-color:var(--border-hover)}
+.admin-item-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.admin-item-icon svg{width:18px;height:18px}
+.admin-item-icon img{width:100%;height:100%;object-fit:contain;border-radius:6px}
+.admin-item-icon.tiktok{background:rgba(255,0,80,.12)}.admin-item-icon.tiktok svg{fill:#ff0050}
+.admin-item-icon.twitter{background:rgba(29,161,242,.12)}.admin-item-icon.twitter svg{fill:#1da1f2}
+.admin-item-icon.twitch{background:rgba(145,70,255,.12)}.admin-item-icon.twitch svg{fill:#9146ff}
+.admin-item-icon.discord{background:rgba(88,101,242,.12)}.admin-item-icon.discord svg{fill:#5865f2}
+.admin-item-icon.custom{background:var(--bg3)}
+.admin-item-info{flex:1;min-width:0}
+.admin-item-info .name{font-size:.9rem;font-weight:600;color:var(--text-bright)}
+.admin-item-info .url{font-size:.75rem;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.btn-icon{width:32px;height:32px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.btn-icon.delete:hover{border-color:var(--danger);color:var(--danger);background:rgba(239,68,68,.1)}
+.btn-icon svg{width:14px;height:14px}
+.toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:var(--radius);background:var(--success);color:#fff;font-size:.85rem;font-weight:600;transform:translateY(80px);opacity:0;transition:all .3s ease;z-index:999}
+.toast.error{background:var(--danger)}.toast.show{transform:translateY(0);opacity:1}
+.lang-toggle{position:absolute;top:20px;right:20px;display:flex;gap:2px;background:var(--bg3);border-radius:6px;padding:2px}
+.lang-btn{padding:4px 10px;border:none;border-radius:4px;font-size:.72rem;font-weight:700;cursor:pointer;background:transparent;color:var(--text-dim);transition:all .2s;text-transform:uppercase}
+.lang-btn.active{background:var(--accent);color:#fff}
+.loading-spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(max-width:768px){.sidebar{display:none}.main{margin-left:0}.page-header{padding:28px 20px 24px}.page-header h1{font-size:1.5rem}.content{padding:20px}.sponsors-grid{grid-template-columns:1fr}.admin-form,.admin-list{max-width:100%}.search-wrap{max-width:100%}}
+</style>
+</head>
+<body>
+<nav class="sidebar">
+  <div class="sidebar-logo"><h2>Run<span>Space</span></h2></div>
+  <div class="nav-group">
+    <div class="nav-group-title">Info</div>
+    <a href="/download.html" class="nav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg><span data-i18n="nav_download">Ladda ner</span></a>
+    <a href="/news.html" class="nav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2"/></svg><span data-i18n="nav_news">Nyheter</span></a>
+    <a href="/terms.html" class="nav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span data-i18n="nav_terms">Villkor</span></a>
+    <a href="/privacy.html" class="nav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg><span data-i18n="nav_privacy">Integritet</span></a>
+    <a href="/about.html" class="nav-link"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span data-i18n="nav_about">Om oss</span></a>
+    <a href="/sponsors.html" class="nav-link active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg><span data-i18n="nav_sponsors">Sponsors</span></a>
+  </div>
+</nav>
+<div class="main">
+  <div class="page-header">
+    <h1 data-i18n="page_title">Sponsors</h1>
+    <p data-i18n="page_desc">Tack till alla som st\u00F6djer RunSpace och g\u00F6r plattformen m\u00F6jlig.</p>
+    <div class="lang-toggle">
+      <button class="lang-btn active" onclick="setLang('sv')">SV</button>
+      <button class="lang-btn" onclick="setLang('en')">EN</button>
+    </div>
+  </div>
+  <div class="content">
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('public')" data-i18n="tab_public">Sponsors</button>
+      <button class="tab-btn" onclick="switchTab('admin')" data-i18n="tab_admin">Hantera</button>
+    </div>
+    <div id="tab-public" class="tab-content active">
+      <div class="search-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="search-input" placeholder="S\u00F6k sponsor..." data-ph-i18n="ph_search" oninput="renderSponsors()">
+      </div>
+      <div class="sponsors-grid" id="sponsors-grid"></div>
+      <div class="no-results" id="no-results" style="display:none"><span data-i18n="no_results">Inga tr\u00E4ffar.</span></div>
+      <div class="empty-state" id="empty-state" style="display:none">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
+        <p data-i18n="empty">Inga sponsors \u00E4nnu.</p>
+      </div>
+    </div>
+    <div id="tab-admin" class="tab-content">
+      <div class="admin-form">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span data-i18n="form_title">L\u00E4gg till sponsor</span></h3>
+        <div class="form-row">
+          <label data-i18n="label_platform">Plattform</label>
+          <select id="inp-platform" onchange="toggleLogoRow()">
+            <option value="tiktok">TikTok</option>
+            <option value="twitter">Twitter / X</option>
+            <option value="twitch">Twitch</option>
+            <option value="discord">Discord</option>
+            <option value="custom" data-i18n-opt="platform_custom">Annan (med logga)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label data-i18n="label_name">Namn</label>
+          <input type="text" id="inp-name" placeholder="Sponsorns namn" data-ph-i18n="ph_name">
+        </div>
+        <div class="form-row">
+          <label data-i18n="label_url">L\u00E4nk</label>
+          <input type="url" id="inp-url" placeholder="https://tiktok.com/@exempel" data-ph-i18n="ph_url">
+        </div>
+        <div class="form-row logo-row" id="logo-row">
+          <label data-i18n="label_logo">Logotyp</label>
+          <div class="file-input-wrap">
+            <input type="file" id="inp-logo" accept="image/*">
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="addSponsor()" id="btn-submit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span data-i18n="btn_add">L\u00E4gg till</span>
+          </button>
+          <button class="btn btn-secondary" onclick="resetForm()" data-i18n="btn_clear">Rensa</button>
+        </div>
+      </div>
+      <div class="admin-list">
+        <h3 data-i18n="list_title">Nuvarande sponsors</h3>
+        <div id="admin-list-items"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+var API='/api/sponsors';var sponsors=[];var lang='sv';
+var ICONS={tiktok:'<svg viewBox="0 0 24 24"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.88 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1v-3.5a6.37 6.37 0 00-.79-.05A6.34 6.34 0 003.15 15.3a6.34 6.34 0 0010.86 4.46V13.4a8.16 8.16 0 005.58 2.19V12.1a4.84 4.84 0 01-3.58-1.93V6.69h3.58z"/></svg>',twitter:'<svg viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>',twitch:'<svg viewBox="0 0 24 24"><path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z"/></svg>',discord:'<svg viewBox="0 0 24 24"><path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 00-.041-.106 13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.892.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>'};
+var PNAMES={tiktok:'TikTok',twitter:'Twitter / X',twitch:'Twitch',discord:'Discord',custom:'Sponsor'};
+var T={sv:{nav_download:'Ladda ner',nav_news:'Nyheter',nav_terms:'Villkor',nav_privacy:'Integritet',nav_about:'Om oss',nav_sponsors:'Sponsors',page_title:'Sponsors',page_desc:'Tack till alla som st\u00F6djer RunSpace och g\u00F6r plattformen m\u00F6jlig.',tab_public:'Sponsors',tab_admin:'Hantera',form_title:'L\u00E4gg till sponsor',label_platform:'Plattform',label_name:'Namn',label_url:'L\u00E4nk',label_logo:'Logotyp',btn_add:'L\u00E4gg till',btn_clear:'Rensa',list_title:'Nuvarande sponsors',empty:'Inga sponsors \u00E4nnu.',no_results:'Inga tr\u00E4ffar.',ph_name:'Sponsorns namn',ph_url:'https://tiktok.com/@exempel',ph_search:'S\u00F6k sponsor...',toast_added:'Sponsor tillagd!',toast_removed:'Sponsor borttagen.',toast_fill:'Fyll i namn och l\u00E4nk.',toast_error:'N\u00E5got gick fel.',confirm_delete:'Ta bort denna sponsor?',visit:'Bes\u00F6k',platform_custom:'Annan (med logga)'},en:{nav_download:'Download',nav_news:'News',nav_terms:'Terms',nav_privacy:'Privacy',nav_about:'About',nav_sponsors:'Sponsors',page_title:'Sponsors',page_desc:'Thanks to everyone who supports RunSpace and makes the platform possible.',tab_public:'Sponsors',tab_admin:'Manage',form_title:'Add sponsor',label_platform:'Platform',label_name:'Name',label_url:'Link',label_logo:'Logo',btn_add:'Add',btn_clear:'Clear',list_title:'Current sponsors',empty:'No sponsors yet.',no_results:'No results found.',ph_name:'Sponsor name',ph_url:'https://tiktok.com/@example',ph_search:'Search sponsors...',toast_added:'Sponsor added!',toast_removed:'Sponsor removed.',toast_fill:'Please fill in name and link.',toast_error:'Something went wrong.',confirm_delete:'Remove this sponsor?',visit:'Visit',platform_custom:'Other (with logo)'}};
+function setLang(l){lang=l;document.querySelectorAll('.lang-btn').forEach(function(b){b.classList.toggle('active',b.textContent.trim().toLowerCase()===l)});document.querySelectorAll('[data-i18n]').forEach(function(el){var k=el.getAttribute('data-i18n');if(T[l][k])el.textContent=T[l][k]});document.querySelectorAll('[data-ph-i18n]').forEach(function(el){var k=el.getAttribute('data-ph-i18n');if(T[l][k])el.placeholder=T[l][k]});document.querySelectorAll('[data-i18n-opt]').forEach(function(el){var k=el.getAttribute('data-i18n-opt');if(T[l][k])el.textContent=T[l][k]});renderSponsors()}
+function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function showToast(msg,isErr){var t=document.getElementById('toast');t.textContent=msg;t.className='toast'+(isErr?' error':'');t.classList.add('show');setTimeout(function(){t.classList.remove('show')},2500)}
+function switchTab(tab){document.querySelectorAll('.tab-btn').forEach(function(b,i){b.classList.toggle('active',(i===0&&tab==='public')||(i===1&&tab==='admin'))});document.getElementById('tab-public').classList.toggle('active',tab==='public');document.getElementById('tab-admin').classList.toggle('active',tab==='admin')}
+function toggleLogoRow(){var v=document.getElementById('inp-platform').value;document.getElementById('logo-row').classList.toggle('visible',v==='custom')}
+function fetchSponsors(){fetch(API).then(function(r){return r.json()}).then(function(d){sponsors=d;renderSponsors()}).catch(function(e){console.error('Load failed:',e)})}
+function addSponsor(){var p=document.getElementById('inp-platform').value;var n=document.getElementById('inp-name').value.trim();var u=document.getElementById('inp-url').value.trim();if(!n||!u){showToast(T[lang].toast_fill,true);return}var btn=document.getElementById('btn-submit');btn.disabled=true;var orig=btn.innerHTML;btn.innerHTML='<span class="loading-spinner"></span>';var fd=new FormData();fd.append('name',n);fd.append('description',p);fd.append('url',u);var logoFile=document.getElementById('inp-logo').files[0];if(p==='custom'&&logoFile){fd.append('logo',logoFile)}fetch(API,{method:'POST',body:fd}).then(function(r){if(!r.ok)throw new Error(r.statusText);showToast(T[lang].toast_added);resetForm();fetchSponsors()}).catch(function(e){showToast(T[lang].toast_error,true)}).finally(function(){btn.disabled=false;btn.innerHTML=orig})}
+function deleteSponsor(id){if(!confirm(T[lang].confirm_delete))return;fetch(API+'/'+id,{method:'DELETE'}).then(function(r){if(!r.ok)throw new Error(r.statusText);showToast(T[lang].toast_removed);fetchSponsors()}).catch(function(e){showToast(T[lang].toast_error,true)})}
+function resetForm(){document.getElementById('inp-name').value='';document.getElementById('inp-url').value='';document.getElementById('inp-logo').value='';document.getElementById('inp-platform').selectedIndex=0;toggleLogoRow()}
+function getFiltered(){var q=(document.getElementById('search-input').value||'').toLowerCase().trim();if(!q)return sponsors;return sponsors.filter(function(s){var p=s.description||'';var pn=PNAMES[p]||p;return s.name.toLowerCase().indexOf(q)>-1||pn.toLowerCase().indexOf(q)>-1||(s.url||'').toLowerCase().indexOf(q)>-1})}
+function renderSponsors(){var filtered=getFiltered();var grid=document.getElementById('sponsors-grid');var empty=document.getElementById('empty-state');var noRes=document.getElementById('no-results');var q=(document.getElementById('search-input').value||'').trim();if(sponsors.length===0){grid.innerHTML='';empty.style.display='block';noRes.style.display='none'}else if(filtered.length===0){grid.innerHTML='';empty.style.display='none';noRes.style.display='block'}else{empty.style.display='none';noRes.style.display='none';grid.innerHTML=filtered.map(function(s){var p=s.description||'custom';var ic=ICONS[p]||'';var pn=PNAMES[p]||p;var hasLogo=s.logoPath&&s.logoPath.length>0;var iconHtml=hasLogo?'<img src="'+esc(s.logoPath)+'" alt="'+esc(s.name)+'">':ic;var iconClass=hasLogo?'custom':p;return'<div class="sponsor-card" data-platform="'+esc(p)+'"><div class="sponsor-icon '+esc(iconClass)+'">'+iconHtml+'</div><div class="sponsor-name">'+esc(s.name)+'</div><div class="sponsor-handle">'+esc(pn)+'</div>'+(s.url?'<a href="'+esc(s.url)+'" target="_blank" rel="noopener" class="sponsor-link" data-platform="'+esc(p)+'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg> '+T[lang].visit+'</a>':'')+'</div>'}).join('')}var list=document.getElementById('admin-list-items');if(sponsors.length===0){list.innerHTML='<p style="color:var(--text-dim);font-size:.85rem">'+T[lang].empty+'</p>'}else{list.innerHTML=sponsors.map(function(s){var p=s.description||'custom';var ic=ICONS[p]||'';var hasLogo=s.logoPath&&s.logoPath.length>0;var iconHtml=hasLogo?'<img src="'+esc(s.logoPath)+'" alt="">':ic;var iconClass=hasLogo?'custom':p;return'<div class="admin-item"><div class="admin-item-icon '+esc(iconClass)+'">'+iconHtml+'</div><div class="admin-item-info"><div class="name">'+esc(s.name)+'</div><div class="url">'+(s.url?esc(s.url):'\u2014')+'</div></div><button class="btn-icon delete" onclick="deleteSponsor('+s.id+')" title="Delete"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button></div>'}).join('')}}
+fetchSponsors();
+</script>
+</body>
+</html>

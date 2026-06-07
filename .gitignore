@@ -1,0 +1,51 @@
+# Secrets
+*.env
+*.key
+cookies.txt
+sendgrid.env
+
+# Databases
+*.db
+*.sqlite
+runspace.db
+runspace.db.backup*
+
+# .NET build files
+bin/
+obj/
+publish/
+
+# Python/cache
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+logs/
+
+# Backups / broken files
+*.bak
+*.backup*
+*.broken
+Program.cs.bak*
+main.py.bak*
+
+# Local config
+appsettings.Development.json
+appsettings.Production.json
+discord-bot/.venv/
+discord-bot/venv/
+discord-bot/.venv/
+discord-bot/venv/
+wwwroot/uploads/
+*.bak_*
+*.save
+*.ticket-backup
+*.fixbackup
+wwwroot/uploads/
+*.bak_*
+*.save
+*.ticket-backup
+*.fixbackup
+*.broken*
+appsettings.json

@@ -1,0 +1,49 @@
+ <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>RunSpace - Logga in</title>
+    <style>
+        body { font-family: sans-serif; background: #1a1a1a; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .login-card { background: #222; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); width: 300px; }
+        input { width: 100%; padding: 10px; margin: 10px 0; background: #333; border: 1px solid #444; color: white; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; background: #007bff; border: none; color: white; cursor: pointer; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        .links { margin-top: 15px; text-align: center; font-size: 0.9em; }
+        a { color: #aaa; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <h2>Logga in</h2>
+        <input type="text" id="user" placeholder="Användarnamn">
+        <input type="password" id="pass" placeholder="Lösenord">
+        <button onclick="login()">Logga in</button>
+        <div class="links">
+            <a href="register.html">Inget konto? Registrera här</a>
+        </div>
+        <p id="msg" style="color: #ff6b6b; font-size: 0.9em;"></p>
+    </div>
+
+    <script>
+        async function login() {
+            const user = document.getElementById('user').value;
+            const pass = document.getElementById('pass').value;
+            const msg = document.getElementById('msg');
+
+            const res = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: user, password: pass })
+            });
+
+            if (res.ok) {
+                window.location.href = 'chatt.html';
+            } else {
+                msg.innerText = "Fel användarnamn eller lösenord.";
+            }
+        }
+    </script>
+  <script src="/terminal.js"></script>
+</body>
+</html>

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Profil | RunSpace</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  --bg:#0d0d17; --panel:#1a1a2e; --accent:#6b4eff; --danger:#ff4e4e; --ok:#34d399;
+  --text:#ddd; --border:#222; --dim:#888;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);}
+.container{max-width:900px;margin:120px auto;padding:20px;}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:34px;}
+.profile-top{text-align:center;}
+.avatar{width:120px;height:120px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:40px;font-weight:800;margin:0 auto 16px;overflow:hidden;}
+.avatar img{width:100%;height:100%;object-fit:cover;}
+.bio{margin-top:12px;color:#aaa;max-width:700px;margin-left:auto;margin-right:auto;white-space:pre-wrap;}
+.section{margin-top:22px;}
+h2{margin-bottom:14px;}
+label{display:block;color:#bbb;font-size:.9rem;margin-bottom:6px;}
+.input{width:100%;padding:12px;margin-bottom:14px;background:#090911;border:1px solid var(--border);border-radius:8px;color:#fff;outline:none;}
+.input:focus{border-color:var(--accent);}
+.btn{padding:10px 18px;background:var(--accent);border:none;border-radius:8px;color:white;cursor:pointer;font-weight:600;}
+.btn:disabled{opacity:.7;cursor:not-allowed;}
+.row{display:flex;gap:12px;align-items:center;justify-content:space-between;}
+.hr{margin:18px 0;border:0;border-top:1px solid #222;}
+.toggle{width:46px;height:22px;background:#333;border-radius:20px;position:relative;cursor:pointer;flex:0 0 auto;}
+.toggle::after{content:'';position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.2s;}
+.toggle.on{background:var(--accent);}
+.toggle.on::after{left:27px;}
+.notice{margin-top:6px;font-size:.85rem;color:var(--dim);}
+.error{display:none;margin-top:12px;background:rgba(255,78,78,.1);border:1px solid var(--danger);color:var(--danger);padding:10px;border-radius:10px;font-size:.9rem;}
+</style>
+</head>
+
+<body>
+<div class="container">
+
+  <div class="card profile-top">
+    <div class="avatar" id="avatar"></div>
+    <h1 id="username">Laddar...</h1>
+    <p class="bio" id="bioText"> </p>
+  </div>
+
+  <div class="card section" id="settingsSection" style="display:none;">
+    <h2>Profilinställningar</h2>
+
+    <div id="saveError" class="error"></div>
+
+    <label for="bioInput">Bio</label>
+    <textarea id="bioInput" class="input" rows="4" placeholder="Skriv något om dig..."></textarea>
+
+    <label for="avatarInput">Profilbild (URL)</label>
+    <input id="avatarInput" class="input" placeholder="https://..." />
+
+    <button class="btn" id="saveBtn" onclick="saveProfile()">Spara ändringar</button>
+
+    <div class="hr"></div>
+
+    <div class="row">
+      <div>
+        <div style="font-weight:600;">Privacy</div>
+        <div class="notice">Om avstängd blir din profil privat och döljs i sök.</div>
+      </div>
+      <div class="toggle" id="privacyToggle"></div>
+    </div>
+
+    <div class="hr"></div>
+
+    <div class="row">
+      <div>
+        <div style="font-weight:600;">Tvåfaktorsautentisering (2FA)</div>
+        <div class="notice">UI finns. Riktig 2FA kräver TOTP-backend (kan vi lägga till sen).</div>
+      </div>
+      <div class="toggle" id="twofaToggle"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const profileUser = (params.get("u") || "").trim();
+
+  // Vi stödjer både gamla och nya localStorage-format:
+  // - nytt: { token, user: { username, ... } }
+  // - gammalt: { username/name ... } (utan token)
+  function getSession() {
+    const raw = localStorage.getItem("user");
+    if (!raw) return { token: null, user: null };
+
+    try {
+      const obj = JSON.parse(raw);
+
+      // Nytt format
+      if (obj && typeof obj === "object" && obj.token && obj.user) {
+        return { token: obj.token, user: obj.user };
+      }
+
+      // Ibland sparar man bara user-objektet
+      if (obj && typeof obj === "object" && (obj.username || obj.name)) {
+        return { token: null, user: { username: obj.username || obj.name, name: obj.name || obj.username } };
+      }
+
+      return { token: null, user: null };
+    } catch {
+      return { token: null, user: null };
+    }
+  }
+
+  function setAvatar(el, username, avatarUrl) {
+    el.innerHTML = "";
+    if (avatarUrl) {
+      el.innerHTML = `<img src="${avatarUrl}" alt="avatar">`;
+    } else {
+      el.textContent = (username || "?")[0].toUpperCase();
+    }
+  }
+
+  function showSaveError(msg) {
+    const e = document.getElementById("saveError");
+    e.textContent = msg;
+    e.style.display = "block";
+  }
+  function clearSaveError() {
+    const e = document.getElementById("saveError");
+    e.textContent = "";
+    e.style.display = "none";
+  }
+
+  async function loadProfile() {
+    if (!profileUser) {
+      document.getElementById("username").innerText = "Ingen användare i URL (lägg ?u=namn)";
+      return;
+    }
+
+    // Profil-endpointen är publik: /api/users/profile?u=...
+    const res = await fetch(`/api/users/profile?u=${encodeURIComponent(profileUser)}`);
+    if (!res.ok) {
+      document.getElementById("username").innerText = "Kunde inte ladda profilen (API-fel " + res.status + ")";
+      return;
+    }
+
+    const data = await res.json();
+
+    document.getElementById("username").innerText = data.username || profileUser;
+    document.getElementById("bioText").innerText = data.bio || "Ingen bio än.";
+
+    setAvatar(document.getElementById("avatar"), data.username || profileUser, data.avatarUrl);
+
+    const session = getSession();
+    const myUsername = session.user?.username;
+
+    // Visa inställningar endast om det är din egen profil
+    if (myUsername && myUsername === (data.username || profileUser)) {
+      document.getElementById("settingsSection").style.display = "block";
+      document.getElementById("bioInput").value = data.bio || "";
+      document.getElementById("avatarInput").value = data.avatarUrl || "";
+
+      if (data.isPublic) document.getElementById("privacyToggle").classList.add("on");
+      else document.getElementById("privacyToggle").classList.remove("on");
+
+      if (data.twoFA) document.getElementById("twofaToggle").classList.add("on");
+      else document.getElementById("twofaToggle").classList.remove("on");
+    }
+  }
+
+  async function readBody(res) {
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    const text = await res.text().catch(() => "");
+    if (ct.includes("application/json")) {
+      try { return { json: JSON.parse(text || "{}"), text }; } catch { return { json: null, text }; }
+    }
+    return { json: null, text };
+  }
+
+  async function saveProfile() {
+    clearSaveError();
+
+    const session = getSession();
+    if (!session.token) {
+      showSaveError("Du är inte inloggad med token. Logga in igen så att JWT sparas.");
+      return;
+    }
+
+    const bio = document.getElementById("bioInput").value;
+    const avatarUrl = document.getElementById("avatarInput").value;
+    const isPublic = document.getElementById("privacyToggle").classList.contains("on");
+    const twoFA = document.getElementById("twofaToggle").classList.contains("on");
+
+    const btn = document.getElementById("saveBtn");
+    btn.disabled = true;
+
+    try {
+      const res = await fetch("/api/users/update-profile", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "Authorization": `Bearer ${session.token}`
+        },
+        body: JSON.stringify({ bio, avatarUrl, isPublic, twoFA })
+      });
+
+      const body = await readBody(res);
+
+      if (res.ok) {
+        alert("Profil uppdaterad!");
+        location.reload();
+        return;
+      }
+
+      const msg = body.json?.message || (body.text ? body.text.slice(0, 200) : null) || `Fel vid sparande (HTTP ${res.status}).`;
+      showSaveError(`${msg} (HTTP ${res.status})`);
+
+    } catch (e) {
+      console.error(e);
+      showSaveError("Kunde inte nå API:t vid sparande.");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  document.querySelectorAll(".toggle").forEach(t => t.addEventListener("click", () => t.classList.toggle("on")));
+
+  loadProfile();
+</script>
+  <script src="/terminal.js"></script>
+</body>
+</html>

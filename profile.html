@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RunSpace &#8211; Profil</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0b1220;--panel:#111827;--panel-2:#0f172a;--border:#1e293b;--text:#f1f5f9;--dim:#94a3b8;--faint:#475569;--blue:#3b82f6;--blue-dark:#1d4ed8;--red:#ef4444;--green:#22c55e;--amber:#eab308;--input-bg:#020617;--ring:#7c5cff}
+body{min-height:100vh;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.5}
+a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{max-width:820px;margin:20px auto 0;padding:0 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
+.brand{color:white;font-size:20px;font-weight:800;cursor:pointer;letter-spacing:-0.3px}
+.nav{display:flex;gap:6px;flex-wrap:wrap}
+.nav a{background:rgba(255,255,255,0.05);color:#cbd5e1;padding:8px 13px;border-radius:10px;font-weight:600;font-size:13px;transition:background .15s}
+.nav a:hover{background:rgba(255,255,255,0.1);text-decoration:none}
+.nav a.on{background:rgba(255,255,255,0.1);color:white}
+.lang-btns{display:flex;gap:4px;margin-left:8px}
+.lang-btns button{border:none;border-radius:6px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;background:rgba(255,255,255,0.05);color:#cbd5e1;transition:background .15s}
+.lang-btns button:hover{background:rgba(255,255,255,0.1);color:white}
+.page{max-width:820px;margin:0 auto;padding:24px 20px 60px}
+.profile-top{display:flex;gap:20px;align-items:flex-start;margin-bottom:24px}
+.av-wrap{flex-shrink:0;width:100px;height:100px;border-radius:50%;border:3px solid var(--ring);padding:3px;background:var(--panel);position:relative;cursor:pointer}
+.av-wrap img,.av-wrap .av-letter{width:100%;height:100%;border-radius:50%;display:block}
+.av-wrap img{object-fit:cover;background:var(--panel-2)}
+.av-letter{background:var(--panel-2);display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:700;color:var(--faint);user-select:none}
+.av-overlay{position:absolute;inset:3px;border-radius:50%;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .2s;font-size:11px;font-weight:700;color:white}
+.av-wrap:hover .av-overlay{opacity:1}
+.profile-info{flex:1;padding-top:4px}
+.profile-info h1{font-size:24px;font-weight:800;letter-spacing:-0.5px;margin-bottom:6px}
+.profile-info h1 .tag{font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;vertical-align:middle;margin-left:6px}
+.tag-admin{background:#422006;color:var(--amber)}
+.verified-badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;vertical-align:middle;margin-left:4px}
+.profile-meta{display:flex;gap:16px;color:var(--dim);font-size:13px;flex-wrap:wrap}
+.badges{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
+.bdg{font-size:11px;padding:3px 8px;border-radius:4px;background:rgba(255,255,255,0.04);border:1px solid var(--border);color:var(--dim);font-weight:500}
+.bio-block{margin-top:10px;padding:10px 14px;background:rgba(255,255,255,0.02);border-left:3px solid var(--border);color:var(--dim);white-space:pre-wrap;word-break:break-word;min-height:18px;font-size:13px}
+.bio-block:empty::after{content:'No bio.';color:var(--faint);font-style:italic}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.grid .wide{grid-column:1/-1}
+.sec{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px}
+.sec h2{font-size:14px;font-weight:700;margin-bottom:2px}
+.sec .desc{color:var(--faint);font-size:12px;margin-bottom:12px}
+.field{margin-bottom:10px}
+.lbl{display:block;font-size:11px;font-weight:600;color:var(--dim);margin-bottom:3px}
+.inp,textarea{width:100%;padding:8px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font:inherit;font-size:13px;outline:none;transition:border-color .15s}
+.inp:focus,textarea:focus{border-color:var(--blue)}
+textarea{min-height:64px;resize:vertical}
+input[type="file"]{font:inherit;font-size:12px;color:var(--dim)}
+input[type="file"]::file-selector-button{border:1px solid var(--border);border-radius:6px;padding:5px 10px;background:var(--panel-2);color:var(--text);cursor:pointer;font:inherit;font-size:11px;font-weight:600;margin-right:8px}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.btn{border:none;border-radius:7px;padding:8px 14px;font:inherit;font-size:12px;font-weight:700;cursor:pointer;transition:opacity .15s}
+.btn:hover{opacity:0.85}
+.btn:disabled{opacity:0.4;cursor:default}
+.btn-blue{background:var(--blue);color:white}
+.btn-ghost{background:rgba(255,255,255,0.06);color:var(--dim)}
+.btn-ghost:hover{color:white}
+.btn-red{background:rgba(239,68,68,0.15);color:var(--red)}
+.twofa-ind{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;margin-bottom:10px}
+.twofa-ind .dot{width:7px;height:7px;border-radius:50%}
+.twofa-ind.on{color:var(--green)}.twofa-ind.on .dot{background:var(--green)}
+.twofa-ind.off{color:var(--amber)}.twofa-ind.off .dot{background:var(--amber)}
+.hidden{display:none!important}
+.setup-box{margin-top:10px;padding:12px;border:1px solid var(--border);border-radius:7px;background:rgba(0,0,0,0.2)}
+.setup-box h3{font-size:13px;margin-bottom:8px}
+.qr-area{background:#fff;border-radius:6px;padding:10px;display:inline-block;margin-bottom:10px}
+.secret-txt{font-family:'Courier New',monospace;font-size:12px;padding:5px 8px;background:var(--input-bg);border:1px solid var(--border);border-radius:4px;color:var(--blue);word-break:break-all}
+.recovery-list{display:flex;flex-wrap:wrap;gap:3px;margin-top:6px}
+.recovery-list span{font-family:'Courier New',monospace;font-size:11px;padding:2px 6px;background:var(--input-bg);border:1px solid var(--border);border-radius:3px;color:var(--dim)}
+.s-list{display:flex;flex-direction:column;gap:5px}
+.s-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border:1px solid var(--border);border-radius:7px;background:rgba(0,0,0,0.15)}
+.s-item .s-ip{font-size:12px;font-weight:600}
+.s-item .s-ua{font-size:10px;color:var(--faint);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.s-item .s-when{font-size:10px;color:var(--faint);white-space:nowrap}
+.s-kill{background:none;border:none;color:var(--faint);cursor:pointer;font-size:14px;padding:2px 4px;line-height:1}
+.s-kill:hover{color:var(--red)}
+.toast{position:fixed;bottom:20px;right:20px;padding:10px 16px;border-radius:7px;font-size:12px;font-weight:600;z-index:500;opacity:0;transform:translateY(16px);transition:all .25s;pointer-events:none}
+.toast.show{opacity:1;transform:translateY(0)}
+.toast.ok{background:#052e16;border:1px solid #166534;color:#86efac}
+.toast.err{background:#1c0a0a;border:1px solid #7f1d1d;color:#fca5a5}
+.toast.warn{background:#1a1505;border:1px solid #713f12;color:#fde047}
+@media(max-width:680px){.grid{grid-template-columns:1fr}.profile-top{flex-direction:column;align-items:center;text-align:center}.profile-meta{justify-content:center}.badges{justify-content:center}.av-wrap{width:84px;height:84px}}
+</style>
+</head>
+<body>
+<div class="topbar">
+<div class="brand" onclick="location.href='/'">RunSpace</div>
+<div class="nav">
+<a href="/" data-i18n="home">Hem</a>
+<a href="/chatt.html" data-i18n="chat">Chatt</a>
+<a href="/profile.html" class="on" data-i18n="profile">Profil</a>
+<a href="/settings.html" data-i18n="settings">Inst&#228;llningar</a>
+</div>
+<div class="lang-btns"><button onclick="I18N.set('sv')">SV</button><button onclick="I18N.set('en')">EN</button><button onclick="I18N.set('fr')">FR</button><button onclick="I18N.set('ru')">RU</button></div>
+</div>
+<div class="page">
+<div class="profile-top">
+<div class="av-wrap" onclick="document.getElementById('avatarFile').click()">
+<div class="av-letter" id="avatar">?</div>
+<div class="av-overlay">&#228;ndra</div>
+<input type="file" id="avatarFile" accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none" onchange="uploadAvatar()">
+</div>
+<div class="profile-info">
+<h1 id="nameHeading">&#8212;</h1>
+<div class="profile-meta">
+<span id="metaAge"></span>
+<span id="metaStatus"></span>
+<span id="metaSessions"></span>
+</div>
+<div class="badges" id="badgeList"></div>
+<div class="bio-block" id="bioBlock"></div>
+</div>
+</div>
+<div class="grid">
+<div class="sec wide">
+<h2 data-i18n="change_bio">Bio</h2>
+<p class="desc" data-i18n="bio_desc">Max 500 tecken. Syns p&#229; din publika profil.</p>
+<textarea id="bioInput" placeholder="Skriv n&#229;got..." maxlength="500"></textarea>
+<div class="btns"><button class="btn btn-blue" id="saveBioBtn" data-i18n="save">Spara</button></div>
+</div>
+<div class="sec">
+<h2 data-i18n="two_factor">Two-factor (2FA)</h2>
+<p class="desc" data-i18n="two_factor_desc">Skydda kontot med en authenticator-app.</p>
+<div class="twofa-ind off" id="twofaInd"><span class="dot"></span><span id="twofaText">...</span></div>
+<div id="twofaBtns"><button class="btn btn-blue" id="setup2faBtn" data-i18n="activate">Aktivera</button></div>
+<div class="setup-box hidden" id="setupBox">
+<h3>Skanna med din app</h3>
+<div class="qr-area" id="qrArea"></div>
+<div class="field"><span class="lbl">Nyckel (manuell)</span><div class="secret-txt" id="secretTxt"></div></div>
+<div class="field"><span class="lbl">Kod fr&#229;n appen</span><input class="inp" id="verifyCodeInput" type="text" maxlength="10" placeholder="123456"></div>
+<div class="btns"><button class="btn btn-blue" id="verifyBtn">Verifiera</button></div>
+</div>
+<div class="setup-box hidden" id="recoveryBox">
+<h3>&#197;terst&#228;llningskoder</h3>
+<p class="desc" style="margin-bottom:6px">Spara dessa. Varje kod fungerar en g&#229;ng.</p>
+<div class="recovery-list" id="recoveryCodes"></div>
+</div>
+<div class="setup-box hidden" id="disableBox">
+<h3>Disable 2FA</h3>
+<div class="field"><span class="lbl">2FA code</span><input class="inp" id="disableCodeInput" type="text" placeholder="123456"></div>
+<div class="btns"><button class="btn btn-red" id="disableBtn">St&#228;ng av</button></div>
+</div>
+</div>
+<div class="sec">
+<h2 data-i18n="profile_pic">Profile picture</h2>
+<p class="desc" data-i18n="pic_desc">PNG, JPG, GIF or WebP. Max 5 MB.</p>
+<div class="btns">
+<button class="btn btn-ghost" onclick="document.getElementById('avatarFile').click()" data-i18n="upload">Ladda upp</button>
+<button class="btn btn-red" id="resetAvatarBtn" data-i18n="remove_pic">Ta bort</button>
+</div>
+</div>
+<div class="sec wide">
+<h2 data-i18n="sessions">Active sessions</h2>
+<p class="desc" data-i18n="sessions_desc">Devices logged into your account.</p>
+<div class="s-list" id="sessionList"><span style="color:var(--faint);font-size:12px">Laddar...</span></div>
+<div class="btns"><button class="btn btn-red" id="logoutAllBtn" data-i18n="logout_all">Log out all</button></div>
+</div>
+<div class="sec wide">
+<h2 data-i18n="account">Account</h2>
+<p class="desc" data-i18n="account_desc">Password and account security.</p>
+<div class="btns">
+<a href="/settings.html" class="btn btn-ghost" data-i18n="change_pw">Change password</a>
+<button class="btn btn-red" id="freezeBtn" data-i18n="freeze">Freeze account 24h</button>
+</div>
+</div>
+</div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/i18n.js"></script>
+<script>
+var $=function(id){return document.getElementById(id)},me=null;
+function toast(msg,type){var t=$('toast');t.textContent=msg;t.className='toast '+(type||'ok');requestAnimationFrame(function(){t.classList.add('show')});clearTimeout(t._t);t._t=setTimeout(function(){t.classList.remove('show')},3000)}
+function setAvatar(user,url){var w=document.querySelector('.av-wrap');var letter='<div class="av-letter">'+(user||'?')[0].toUpperCase()+'</div><div class="av-overlay">\u00e4ndra</div><input type="file" id="avatarFile" accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none" onchange="uploadAvatar()">';if(url){w.innerHTML='<img src="'+url+'?t='+Date.now()+'" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;background:var(--panel-2)" onerror="this.parentElement.innerHTML=\''+letter.replace(/'/g,"\\&#39;")+'\'"><div class="av-overlay">\u00e4ndra</div><input type="file" id="avatarFile" accept=".png,.jpg,.jpeg,.gif,.webp" style="display:none" onchange="uploadAvatar()">'}else{w.innerHTML=letter}}
+function timeAgo(iso){if(!iso)return'\u2014';var s=(Date.now()-new Date(iso).getTime())/1000;if(s<60)return'nu';if(s<3600)return Math.floor(s/60)+' min';if(s<86400)return Math.floor(s/3600)+' tim';return Math.floor(s/86400)+' dagar'}
+async function load(){try{var r=await fetch('/api/me',{credentials:'include'});if(!r.ok){location.href='/login.html';return}me=await r.json();var h1=$('nameHeading');h1.textContent=me.username;if(me.status==='verified')h1.insertAdjacentHTML('beforeend','<span class="verified-badge" title="Verified"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="12" fill="#7c5cff"/><path d="M7.5 12.5l3 3 6-6.5" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>');if(me.isAdmin)h1.insertAdjacentHTML('beforeend',' <span class="tag tag-admin">ADMIN</span>');$('metaAge').textContent=me.age?'\u2022 '+me.age:'';$('metaStatus').textContent=me.status||'';$('metaSessions').textContent='\u2022 '+(me.activeSessions||0)+' sessioner';setAvatar(me.username,me.avatarUrl);$('badgeList').innerHTML=(me.badges||[]).map(function(b){return'<span class="bdg">'+b+'</span>'}).join('');$('bioBlock').textContent=me.bio||'';$('bioInput').value=me.bio||'';set2fa(me.twoFactorEnabled);loadSessions()}catch(e){location.href='/login.html'}}
+async function saveBio(){var bio=$('bioInput').value.trim();try{var r=await fetch('/api/profile/update',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({bio:bio})});if(!r.ok){var d=await r.json().catch(function(){return null});toast(d&&d.message||'Fel','err');return}$('bioBlock').textContent=bio;toast('Bio sparad')}catch(e){toast('N\u00e4tverksfel','err')}}
+async function uploadAvatar(){var f=$('avatarFile').files[0];if(!f){toast('V\u00e4lj en bild','warn');return}if(f.size>5*1024*1024){toast('Max 5 MB','err');return}var fd=new FormData();fd.append('avatar',f);try{var r=await fetch('/api/profile/avatar/upload',{method:'POST',credentials:'include',body:fd});if(!r.ok){var d=await r.json().catch(function(){return null});toast(d&&d.error||'Fel','err');return}var d=await r.json();setAvatar(me&&me.username,d.avatarUrl);toast('Bild uppdaterad')}catch(e){toast('Error','err')}}
+function resetAvatar(){setAvatar(me&&me.username,'');toast('Bild borttagen')}
+function set2fa(on){$('twofaText').textContent=on?(typeof I18N!=='undefined'?I18N.get('enabled'):'Enabled'):(typeof I18N!=='undefined'?I18N.get('not_enabled'):'Not enabled');$('twofaInd').className='twofa-ind '+(on?'on':'off');$('setup2faBtn').style.display=on?'none':'';if(on)$('disableBox').classList.remove('hidden');else $('disableBox').classList.add('hidden')}
+async function setup2fa(){try{var r=await fetch('/api/auth/2fa/setup',{method:'POST',credentials:'include'});if(!r.ok){toast('Kunde inte starta','err');return}var d=await r.json();$('secretTxt').textContent=d.secret||'';if(d.otpauthUrl)$('qrArea').innerHTML='<img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data='+encodeURIComponent(d.otpauthUrl)+'" width="150" height="150" alt="QR">';if(d.backupCodes){$('recoveryCodes').innerHTML=d.backupCodes.map(function(c){return'<span>'+c+'</span>'}).join('');$('recoveryBox').classList.remove('hidden')}$('setupBox').classList.remove('hidden');toast('Skanna koden','warn')}catch(e){toast('Error','err')}}
+async function verify2fa(){var code=$('verifyCodeInput').value.trim();if(!code){toast('Enter code','warn');return}try{var r=await fetch('/api/auth/2fa/verify',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})});if(!r.ok){toast('Invalid code','err');return}toast('2FA enabled');set2fa(true);$('setupBox').classList.add('hidden')}catch(e){toast('Error','err')}}
+async function disable2fa(){var code=$('disableCodeInput').value.trim();if(!code){toast('Enter code','warn');return}try{var r=await fetch('/api/auth/2fa/disable',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code})});if(!r.ok){toast('Invalid code','err');return}toast('2FA disabled');set2fa(false)}catch(e){toast('Error','err')}}
+async function loadSessions(){try{var r=await fetch('/api/auth/sessions',{credentials:'include'});if(!r.ok)return;var list=await r.json();var el=$('sessionList');if(!list.length){el.innerHTML='<span style="color:var(--faint);font-size:12px">Inga sessioner.</span>';return}el.innerHTML=list.map(function(s){return'<div class="s-item"><div style="flex:1;min-width:0"><div class="s-ip">'+(s.ip||'\u2014')+'</div><div class="s-ua">'+(s.userAgent||'\u2014')+'</div></div><span class="s-when">'+timeAgo(s.lastActivity)+'</span><button class="s-kill" title="Avsluta" onclick="killSession(\''+s.sessionId+'\')">&#10005;</button></div>'}).join('')}catch(e){}}
+async function killSession(sid){await fetch('/api/auth/sessions/'+sid,{method:'DELETE',credentials:'include'});toast('Session avslutad');loadSessions()}
+async function logoutAll(){await fetch('/api/auth/logout-all',{method:'POST',credentials:'include'});location.href='/login.html'}
+async function freeze(){if(!confirm('Frysa kontot i 24 timmar? Du loggas ut.'))return;var r=await fetch('/api/auth/freeze',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({hours:24})});if(r.ok)location.href='/login.html';else toast('Error','err')}
+document.addEventListener('DOMContentLoaded',function(){load();$('saveBioBtn').onclick=saveBio;$('resetAvatarBtn').onclick=resetAvatar;$('setup2faBtn').onclick=setup2fa;$('verifyBtn').onclick=verify2fa;$('disableBtn').onclick=disable2fa;$('logoutAllBtn').onclick=logoutAll;$('freezeBtn').onclick=freeze});
+</script>
+</body>
+</html>

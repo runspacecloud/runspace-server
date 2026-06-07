@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Inställningar - RunSpace</title>
+    <style>
+        body { font-family: sans-serif; background: #121212; color: white; padding: 20px; }
+        .card { background: #1e1e1e; padding: 20px; border-radius: 8px; max-width: 400px; margin: auto; border: 1px solid #333; }
+        input { width: 100%; padding: 10px; margin: 10px 0; background: #2a2a2a; border: 1px solid #444; color: white; box-sizing: border-box; }
+        button { width: 100%; padding: 10px; background: #007bff; border: none; color: white; cursor: pointer; font-weight: bold; margin-top: 10px; }
+        .msg { margin-top: 15px; text-align: center; font-size: 0.9em; }
+        .success { color: #4bb543; }
+        .error { color: #ff6b6b; }
+        a { color: #888; text-decoration: none; display: block; text-align: center; margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>Inställningar</h2>
+    <p id="user-display" style="color: #007bff;"></p>
+
+    <hr>
+
+    <h3>Byt lösenord</h3>
+    <input type="password" id="oldPass" placeholder="Nuvarande lösenord">
+    <input type="password" id="newPass" placeholder="Nytt lösenord">
+    <button onclick="changePassword()">Spara nytt lösenord</button>
+    <p id="pass-msg" class="msg"></p>
+
+    <hr>
+
+    <h3>Profil (Bio)</h3>
+    <input type="text" id="bioInput" placeholder="Skriv något om dig själv...">
+    <button onclick="updateProfile()">Spara profil</button>
+    <p id="profile-msg" class="msg"></p>
+
+    <a href="chatt.html">← Tillbaka till chatten</a>
+</div>
+
+<script>
+    // 1. Hämta info vid start
+    async function init() {
+        const res = await fetch('/api/me');
+        if (res.ok) {
+            const data = await res.json();
+            document.getElementById('user-display').innerText = "@" + data.username;
+            
+            // Hämta befintlig bio
+            const profRes = await fetch('/api/profile');
+            if (profRes.ok) {
+                const profData = await profRes.json();
+                document.getElementById('bioInput').value = profData.bio || "";
+            }
+        } else {
+            window.location.href = 'login.html';
+        }
+    }
+
+    // 2. Ändra lösenord - MATCHAD MOT Program.cs
+    async function changePassword() {
+        const oldP = document.getElementById('oldPass').value;
+        const newP = document.getElementById('newPass').value;
+        const msg = document.getElementById('pass-msg');
+
+        const res = await fetch('/api/auth/change-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ oldPassword: oldP, newPassword: newP })
+        });
+
+        if (res.ok) {
+            msg.innerText = "Lösenordet ändrat!";
+            msg.className = "msg success";
+        } else {
+            const err = await res.json();
+            msg.innerText = err.message || "Fel: Kunde inte ändra lösenord.";
+            msg.className = "msg error";
+        }
+    }
+
+    // 3. Uppdatera Bio - MATCHAD MOT Program.cs
+    async function updateProfile() {
+        const bioText = document.getElementById('bioInput').value;
+        const msg = document.getElementById('profile-msg');
+
+        const res = await fetch('/api/profile/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bio: bioText })
+        });
+
+        if (res.ok) {
+            msg.innerText = "Profil sparad!";
+            msg.className = "msg success";
+        } else {
+            msg.innerText = "Kunde inte spara profil.";
+            msg.className = "msg error";
+        }
+    }
+
+    init();
+</script>
+
+  <script src="/terminal.js"></script>
+</body>
+</html>

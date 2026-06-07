@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>RunSpace – Control Center</title>
+
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg:#0d0d17;
+      --panel:#1a1a2e;
+      --accent:#6b4eff;
+      --text:#ddd;
+      --text-dim:#888;
+      --border:#222;
+      --danger:#ff4e4e;
+    }
+
+    * { margin:0; padding:0; box-sizing:border-box; }
+
+    body {
+      font-family:'Inter',sans-serif;
+      background:var(--bg);
+      color:var(--text);
+      overflow-x:hidden;
+    }
+
+    .nav {
+      position:fixed;
+      top:0;
+      width:100%;
+      padding:12px 5%;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      background:rgba(13,13,23,0.9);
+      backdrop-filter:blur(15px);
+      border-bottom:1px solid var(--border);
+      z-index:1000;
+    }
+
+    .brand {
+      font-weight:800;
+      color:var(--accent);
+      font-size:1.4rem;
+      cursor:pointer;
+    }
+
+    .nav-right {
+      display:flex;
+      align-items:center;
+      gap:14px;
+    }
+
+    .btn-open {
+      padding:10px 16px;
+      background:transparent;
+      border:1px solid rgba(107,78,255,0.6);
+      color:var(--accent);
+      border-radius:10px;
+      cursor:pointer;
+      font-weight:700;
+      text-decoration:none;
+    }
+
+    .btn-open:hover {
+      border-color:var(--accent);
+    }
+
+    .user-section {
+      position:relative;
+      display:flex;
+      align-items:center;
+      gap:10px;
+      cursor:pointer;
+      padding: 5px 10px;
+      border-radius: 8px;
+    }
+
+    .user-section:hover { background: rgba(255,255,255,0.05); }
+
+    .avatar {
+      width:35px;
+      height:35px;
+      background:var(--accent);
+      border-radius:50%;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-weight:bold;
+      color:white;
+      overflow:hidden;
+    }
+
+    .avatar img { width:100%; height:100%; object-fit:cover; }
+
+    .dropdown {
+      position:absolute;
+      top:50px;
+      right:0;
+      width:220px;
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:12px;
+      display:none;
+      flex-direction:column;
+      box-shadow:0 10px 30px rgba(0,0,0,0.5);
+    }
+
+    .dropdown a,
+    .dropdown button {
+      padding:12px 20px;
+      text-decoration:none;
+      color:var(--text);
+      background:none;
+      border:none;
+      text-align:left;
+      cursor:pointer;
+      font-size: 0.9rem;
+    }
+
+    .dropdown a:hover,
+    .dropdown button:hover {
+      background:rgba(255,255,255,0.05);
+      color:var(--accent);
+    }
+
+    .logout { color:var(--danger) !important; border-top: 1px solid var(--border) !important; }
+
+    .hero {
+      min-height:40vh;
+      display:flex;
+      flex-direction:column;
+      justify-content:center;
+      align-items:center;
+      text-align:center;
+      padding-top:120px;
+    }
+
+    .hero h1 { font-size:4rem; margin-bottom:12px; letter-spacing: -2px; }
+    .hero p { font-size:1.4rem; color:var(--text-dim); }
+
+    .search-wrap {
+      max-width:700px;
+      margin: 40px auto;
+      padding:0 5%;
+    }
+
+    .search-bar {
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:12px;
+      display:flex;
+      gap:12px;
+    }
+
+    .search-input {
+      flex:1;
+      background:#0d0d17;
+      border:1px solid #333;
+      color:var(--text);
+      padding:12px 14px;
+      border-radius:10px;
+      outline:none;
+    }
+
+    .btn-save {
+      padding:12px 24px;
+      background:var(--accent);
+      border:none;
+      color:white;
+      border-radius:10px;
+      cursor:pointer;
+      font-weight:600;
+    }
+
+    .search-results { margin-top:16px; display:grid; gap:10px; }
+
+    .result-card {
+      background:var(--panel);
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:14px;
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+    }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="brand" onclick="location.href='/'">RUNSPACE</div>
+
+  <div class="nav-right">
+    <a href="donate.html" class="btn-open">Donate</a>
+    <a href="chatt.html" class="btn-open">Chatt</a>
+    
+    <div id="userMenuWrapper">
+        <div id="userMenu" class="user-section">
+          <span id="userNameDisplay">Laddar...</span>
+          <div class="avatar" id="userAvatar">?</div>
+          <div class="dropdown" id="myDropdown">
+            <a href="profile.html">Min Profil</a>
+            <a href="settings.html">Inställningar</a>
+            <button class="logout" id="logoutBtn">Logga ut</button>
+          </div>
+        </div>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <h1>RUNSPACE</h1>
+  <p>Välkommen tillbaka, <span id="heroName">Gäst</span>.</p>
+</section>
+
+<section class="search-wrap">
+  <div class="search-bar">
+    <input id="userSearchInput" class="search-input" type="text" placeholder="Sök efter vänner...">
+    <button id="userSearchBtn" class="btn-save">Sök</button>
+  </div>
+  <div id="userSearchResults" class="search-results"></div>
+</section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+// 1. HÄMTA ANVÄNDARDATA
+async function loadUser() {
+  try {
+    // Vi lägger till en tidsstämpel för att tvinga Nginx att inte cacha anropet
+    const res = await fetch('/api/me?t=' + Date.now(), { credentials: 'include' });
+    
+    if (res.status === 401) {
+       showLoginButton();
+       return;
+    }
+
+    const user = await res.json();
+    console.log("Inloggad användare:", user);
+
+    // Uppdatera UI
+    $('userNameDisplay').innerText = user.username;
+    $('heroName').innerText = user.username;
+
+    if (user.avatarUrl) {
+      $('userAvatar').innerHTML = `<img src="${user.avatarUrl}">`;
+    } else {
+      $('userAvatar').innerText = user.username[0].toUpperCase();
+    }
+
+  } catch (err) {
+    console.error("Kunde inte ladda användare:", err);
+    showLoginButton();
+  }
+}
+
+function showLoginButton() {
+    $('userMenuWrapper').innerHTML = '<a href="login.html" class="btn-save">Logga in</a>';
+}
+
+// 2. DROPDOWN LOGIK
+function toggleDropdown(e) {
+  e.stopPropagation();
+  const d = $('myDropdown');
+  if(d) d.style.display = d.style.display === 'flex' ? 'none' : 'flex';
+}
+
+// 3. LOGOUT
+async function logout() {
+  await fetch('/api/auth/logout', { method:'POST', credentials:'include' });
+  location.href = '/login.html';
+}
+
+// 4. SÖKFUNKTION
+async function searchUsers() {
+  const q = $('userSearchInput').value.trim();
+  if (!q) return;
+
+  const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`);
+  const users = await res.json();
+
+  const results = $('userSearchResults');
+  results.innerHTML = '';
+
+  if(users.length === 0) {
+      results.innerHTML = '<div class="result-card">Inga användare hittades.</div>';
+      return;
+  }
+
+  users.forEach(u => {
+    const card = document.createElement('div');
+    card.className = 'result-card';
+    card.innerHTML = `
+      <div><strong>${u.username}</strong></div>
+      <a href="public_profile.html?u=${u.username}" class="btn-open">Profil</a>
+    `;
+    results.appendChild(card);
+  });
+}
+
+// EVENTS
+document.addEventListener('DOMContentLoaded', () => {
+  loadUser();
+  
+  // Vi använder delegation för att hantera klick på element som kan bytas ut
+  document.addEventListener('click', (e) => {
+      const menu = e.target.closest('#userMenu');
+      if (menu) {
+          toggleDropdown(e);
+      } else {
+          if($('myDropdown')) $('myDropdown').style.display = 'none';
+      }
+  });
+
+  document.body.addEventListener('click', (e) => {
+      if(e.target.id === 'logoutBtn') logout();
+  });
+
+  $('userSearchBtn').addEventListener('click', searchUsers);
+  $('userSearchInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') searchUsers();
+  });
+});
+</script>
+
+  <script src="/terminal.js"></script>
+</body>
+</html>

@@ -1,0 +1,1176 @@
+window.addEventListener("unhandledrejection", function(e) {
+  if (e.reason && (e.reason.code === 403 || e.reason.httpStatus === 200)) {
+    console.warn("[RunSpace ignored external promise rejection]", e.reason);
+    e.preventDefault();
+  }
+});
+
+/* RunSpace Music – script.js
+   ------------------------------------------------------------
+   Detta är en första fristående JS‑fil som matchar den nya index.html‑strukturen.
+   Fokus ligger på:
+   • spellisteloggik (IndexedDB)
+   • URL‑parse (YouTube / Spotify)
+   • uppspelning (YouTube‑iframe + <audio> för lokala filer)
+   • grundläggande UI‑bindningar (nav‑sidofält, sökfält, player‑kontroller)
+
+   ✦ All kod är kommenterad så att du snabbt kan bygga vidare.
+   ✦ Ingen extern bundler krävs – filen kan laddas med <script src="/script.js" defer>.
+----------------------------------------------------------------*/
+
+// ──────────────────────────────────────────────────────────────
+// 1. Globala konstanter & state
+// ──────────────────────────────────────────────────────────────
+const DB_NAME = 'runspace-music', DB_VER = 2;
+let db;
+
+// Data in‑memory
+let playlists = [];            // [{id, name, createdAt}]
+let activePlaylistId = null;
+let tracks = [];               // [{id, playlistId, type, title, artist, length, videoId, embedUrl, blobUrl, thumb}]
+
+// Uppspelnings‑state
+let currentIdx = -1;
+let isPlaying = false;
+let ytPlayer, ytReady = false;
+
+// ──────────────────────────────────────────────────────────────
+// 2. DOM helpers
+// ──────────────────────────────────────────────────────────────
+const $ = sel => document.querySelector(sel);
+const $$ = sel => Array.from(document.querySelectorAll(sel));
+const escapeHtml = s => String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#039;'}[m]));
+
+// ──────────────────────────────────────────────────────────────
+// 3. IndexedDB helpers (spellistor + tracks)
+// ──────────────────────────────────────────────────────────────
+function openDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('tracks')) d.createObjectStore('tracks', {keyPath: 'id', autoIncrement: true});
+      if (!d.objectStoreNames.contains('playlists')) d.createObjectStore('playlists', {keyPath: 'id', autoIncrement: true});
+    };
+
+    req.onsuccess = e => {
+      db = e.target.result;
+      res(db);
+    };
+    req.onerror = () => rej(req.error);
+  });
+}
+
+const dbGetAll = store => new Promise((res, rej) => {
+  const tx = db.transaction(store, 'readonly');
+  const req = tx.objectStore(store).getAll();
+  req.onsuccess = () => res(req.result);
+  req.onerror   = () => rej(req.error);
+});
+
+const dbAdd = (store, obj) => new Promise((res, rej) => {
+  const tx  = db.transaction(store, 'readwrite');
+  const req = tx.objectStore(store).add(obj);
+  req.onsuccess = () => { obj.id = req.result; res(obj); };
+  req.onerror   = () => rej(req.error);
+});
+
+const dbPut = (store, obj) => new Promise((res, rej) => {
+  const tx = db.transaction(store, 'readwrite');
+  tx.objectStore(store).put(obj);
+  tx.oncomplete = () => res(obj);
+  tx.onerror    = () => rej(tx.error);
+});
+
+// ──────────────────────────────────────────────────────────────
+// 4. YouTube & Spotify helpers
+// ──────────────────────────────────────────────────────────────
+function parseYouTubeId(url) {
+  const p = [/youtube\.com\/watch.*[?&]v=([\w-]{11})/, /youtu\.be\/([\w-]{11})/];
+  for (const r of p) { const m = url.match(r); if (m) return m[1]; }
+  return null;
+}
+
+function parseSpotifyEmbed(url) {
+  const m = url.match(/spotify\.com\/(track|playlist|album|episode)\/([\w]+)/);
+  if (!m) return null;
+  return `https://open.spotify.com/embed/${m[1]}/${m[2]}?utm_source=generator&theme=0`;
+}
+
+// ──────────────────────────────────────────────────────────────
+// 5. Rendering (sidofält + playlist + player)
+// ──────────────────────────────────────────────────────────────
+function renderSidebar() {
+  const list = $('#playlist-list');
+  list.innerHTML = '';
+  playlists.forEach(p => {
+    const li = document.createElement('li');
+    li.className = 'nav__item' + (p.id === activePlaylistId ? ' active' : '');
+    li.textContent = p.name;
+    li.onclick = () => { activePlaylistId = p.id; renderSidebar(); loadTracks(); };
+    list.appendChild(li);
+  });
+}
+
+function renderTrackTable() {
+  const tbody = $('#track-tbody');
+  tbody.innerHTML = '';
+  tracks.forEach((t, i) => {
+    const tr = document.createElement('tr');
+    tr.dataset.idx = i;
+    tr.innerHTML = `
+      <td style="text-align:center">${t.type === 'youtube' ? '📺' : t.type === 'spotify' ? '🎧' : '🎵'}</td>
+      <td>${escapeHtml(t.title || 'Unknown title')}</td>
+      <td>${escapeHtml(t.artist || '-') }</td>
+      <td style="text-align:right">${t.length || '–'}</td>
+      <td style="text-align:center">⋯</td>`;
+    tr.onclick = e => { if (e.target.tagName !== 'TD') return; playTrack(i); };
+    tbody.appendChild(tr);
+  });
+  $('#playlist-count').textContent = `${tracks.length} tracks`;
+}
+
+function updateNowPlaying(t) {
+  $('#now-title').textContent  = t.title || 'Spår';
+  $('#now-artist').textContent = t.artist || t.type.toUpperCase();
+}
+
+// ──────────────────────────────────────────────────────────────
+// 6. Uppspelning
+// ──────────────────────────────────────────────────────────────
+function playTrack(idx) {
+  if (idx < 0 || idx >= tracks.length) return;
+  currentIdx = idx;
+  const t = tracks[idx];
+  stopAll();
+
+  if (t.type === 'youtube') {
+    ensureYT(() => {
+      ytPlayer.loadVideoById(t.videoId);
+      ytPlayer.playVideo();
+    });
+  } else if (t.type === 'spotify') {
+    $('#now-thumb').innerHTML = '<span>🎧</span>';
+    const iframe = document.createElement('iframe');
+    iframe.src = t.embedUrl;
+    iframe.width = 1; iframe.height = 1; iframe.style.opacity = 0;
+    document.body.appendChild(iframe);
+  } else {
+    const audio = new Audio(t.blobUrl);
+    audio.id = 'audio-local';
+    audio.onended = playNext;
+    audio.play();
+    window._currentAudio = audio;
+  }
+
+  isPlaying = true;
+  updateNowPlaying(t);
+  $('#btn-play').textContent = '⏸';
+}
+
+function ensureYT(cb) {
+  if (ytReady) { cb(); return; }
+  if (!window.onYouTubeIframeAPIReady) {
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+    window.onYouTubeIframeAPIReady = () => {
+      ytReady = true;
+      ytPlayer = new YT.Player(document.createElement('div'), {
+        height: '1', width: '1', videoId: '', playerVars: {autoplay: 1, controls: 0},
+        events: {onStateChange: e => {
+          if (e.data === YT.PlayerState.ENDED) playNext();
+        }}
+      });
+      cb();
+    };
+  }
+}
+
+function stopAll() {
+  if (ytPlayer && ytReady) ytPlayer.stopVideo();
+  if (window._currentAudio) { window._currentAudio.pause(); window._currentAudio = null; }
+  $('#btn-play').textContent = '▶';
+}
+
+function playNext() { if (tracks.length) playTrack((currentIdx + 1) % tracks.length); }
+function playPrev() { if (tracks.length) playTrack((currentIdx - 1 + tracks.length) % tracks.length); }
+
+// ──────────────────────────────────────────────────────────────
+// 7. Event‑bindningar
+// ──────────────────────────────────────────────────────────────
+function bindUI() {
+  $('#btn-create-playlist').onclick = async () => {
+    const name = prompt('Playlist name:');
+    if (!name) return;
+    const p = await dbAdd('playlists', {name, createdAt: Date.now()});
+    playlists.push(p);
+    activePlaylistId = p.id;
+    renderSidebar(); loadTracks();
+  };
+
+  $('#global-search').addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const url = e.target.value.trim();
+    if (!url) return;
+    addUrlTrack(url);
+    e.target.value = '';
+  });
+
+  $('#btn-play').onclick = () => {
+    if (currentIdx === -1) return;
+    if (isPlaying) {
+      if (ytPlayer && ytReady) ytPlayer.pauseVideo();
+      if (window._currentAudio) window._currentAudio.pause();
+      isPlaying = false; $('#btn-play').textContent = '▶';
+    } else {
+      if (ytPlayer && ytReady) ytPlayer.playVideo();
+      if (window._currentAudio) window._currentAudio.play();
+      isPlaying = true; $('#btn-play').textContent = '⏸';
+    }
+  };
+  $('#btn-next').onclick = playNext;
+  $('#btn-prev').onclick = playPrev;
+}
+
+// ──────────────────────────────────────────────────────────────
+// 8. Lägg till tracks via URL
+// ──────────────────────────────────────────────────────────────
+async function addUrlTrack(url) {
+  const ytId = parseYouTubeId(url);
+  if (ytId) {
+    const track = await dbAdd('tracks', {playlistId: activePlaylistId, type: 'youtube', videoId: ytId, title: 'YouTube – ' + ytId});
+    tracks.push(track);
+    renderTrackTable();
+    return;
+  }
+  const sp = parseSpotifyEmbed(url);
+  if (sp) {
+    const track = await dbAdd('tracks', {playlistId: activePlaylistId, type: 'spotify', embedUrl: sp, title: 'Spotify'});
+    tracks.push(track);
+    renderTrackTable();
+    return;
+  }
+  alert('URL was not recognized as YouTube or Spotify');
+}
+
+// ──────────────────────────────────────────────────────────────
+// 9. Init
+// ──────────────────────────────────────────────────────────────
+async function init() {
+  await openDB();
+  playlists = await dbGetAll('playlists');
+  if (!playlists.length) {
+    const p = await dbAdd('playlists', {name: 'Main playlist', createdAt: Date.now()});
+    playlists = [p];
+  }
+  activePlaylistId = playlists[0].id;
+  renderSidebar();
+  loadTracks();
+  bindUI();
+}
+
+async function loadTracks() {
+  tracks = (await dbGetAll('tracks')).filter(t => t.playlistId === activePlaylistId);
+  renderTrackTable();
+}
+
+// Kick‑off
+window.addEventListener('DOMContentLoaded', init);
+
+/* RunSpace Music – YouTube URL patch */
+(function runspaceYoutubePatch() {
+  function ensureHiddenPlayers() {
+    if (!document.getElementById("yt-hidden-player")) {
+      const div = document.createElement("div");
+      div.id = "yt-hidden-player";
+      div.style.position = "fixed";
+      div.style.left = "-9999px";
+      div.style.top = "-9999px";
+      div.style.width = "1px";
+      div.style.height = "1px";
+      div.style.opacity = "0";
+      div.style.pointerEvents = "none";
+      document.body.appendChild(div);
+    }
+
+    if (!document.getElementById("spotify-hidden-player")) {
+      const div = document.createElement("div");
+      div.id = "spotify-hidden-player";
+      div.style.position = "fixed";
+      div.style.left = "-9999px";
+      div.style.top = "-9999px";
+      div.style.width = "1px";
+      div.style.height = "1px";
+      div.style.opacity = "0";
+      div.style.pointerEvents = "none";
+      document.body.appendChild(div);
+    }
+  }
+
+  parseYouTubeId = function(url) {
+    try {
+      const u = new URL(url);
+
+      if (u.hostname.includes("youtu.be")) {
+        return u.pathname.split("/").filter(Boolean)[0] || null;
+      }
+
+      if (u.hostname.includes("youtube.com")) {
+        if (u.searchParams.get("v")) return u.searchParams.get("v");
+
+        const parts = u.pathname.split("/").filter(Boolean);
+        const known = ["shorts", "embed", "live"];
+        if (known.includes(parts[0]) && parts[1]) return parts[1];
+      }
+
+      return null;
+    } catch {
+      const m = String(url).match(/(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([a-zA-Z0-9_-]{11})/);
+      return m ? m[1] : null;
+    }
+  };
+
+  async function fetchYoutubeTitle(videoId) {
+    try {
+      const res = await fetch(
+        "https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=" +
+        encodeURIComponent(videoId) +
+        "&format=json"
+      );
+
+      if (!res.ok) throw new Error("oEmbed failed");
+
+      const data = await res.json();
+      return data.title || "YouTube – " + videoId;
+    } catch {
+      return "YouTube – " + videoId;
+    }
+  }
+
+  ensureYT = function(cb) {
+    ensureHiddenPlayers();
+
+    if (ytReady && ytPlayer) {
+      cb();
+      return;
+    }
+
+    window.onYouTubeIframeAPIReady = function() {
+      ytReady = true;
+
+      ytPlayer = new YT.Player("yt-hidden-player", {
+        height: "1",
+        width: "1",
+        videoId: "",
+        playerVars: {
+          autoplay: 1,
+          controls: 0,
+          rel: 0,
+          playsinline: 1
+        },
+        events: {
+          onReady: function() {
+            ytReady = true;
+            cb();
+          },
+          onStateChange: function(e) {
+            if (e.data === YT.PlayerState.PLAYING) {
+              isPlaying = true;
+              const btn = document.getElementById("btn-play");
+              if (btn) btn.textContent = "⏸";
+            }
+
+            if (e.data === YT.PlayerState.PAUSED) {
+              isPlaying = false;
+              const btn = document.getElementById("btn-play");
+              if (btn) btn.textContent = "▶";
+            }
+
+            if (e.data === YT.PlayerState.ENDED) {
+              playNext();
+            }
+          },
+          onError: function() {
+            alert("YouTube could not be played. Try another link.");
+          }
+        }
+      });
+    };
+
+    if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      document.head.appendChild(tag);
+    }
+  };
+
+  addUrlTrack = async function(url) {
+    url = String(url || "").trim();
+    if (!url) return;
+
+    const ytId = parseYouTubeId(url);
+
+    if (ytId) {
+      const title = await fetchYoutubeTitle(ytId);
+
+      const track = await dbAdd("tracks", {
+        playlistId: activePlaylistId,
+        type: "youtube",
+        videoId: ytId,
+        title: title,
+        artist: "YouTube",
+        length: "–",
+        thumb: "https://i.ytimg.com/vi/" + ytId + "/mqdefault.jpg"
+      });
+
+      tracks.push(track);
+      renderTrackTable();
+
+      const nowTitle = document.getElementById("now-title");
+      const nowArtist = document.getElementById("now-artist");
+
+      if (nowTitle && currentIdx === -1) nowTitle.textContent = "YouTube link added";
+      if (nowArtist && currentIdx === -1) nowArtist.textContent = title;
+
+      return;
+    }
+
+    const sp = parseSpotifyEmbed(url);
+
+    if (sp) {
+      const track = await dbAdd("tracks", {
+        playlistId: activePlaylistId,
+        type: "spotify",
+        embedUrl: sp,
+        title: "Spotify",
+        artist: "Spotify",
+        length: "–"
+      });
+
+      tracks.push(track);
+      renderTrackTable();
+      return;
+    }
+
+    alert("The link was not recognized. Try a normal YouTube link, for example https://www.youtube.com/watch?v=VIDEOID");
+  };
+
+  playTrack = function(idx) {
+    if (idx < 0 || idx >= tracks.length) return;
+
+    currentIdx = idx;
+    const t = tracks[idx];
+
+    stopAll();
+    ensureHiddenPlayers();
+
+    if (t.type === "youtube") {
+      ensureYT(function() {
+        ytPlayer.loadVideoById(t.videoId);
+        ytPlayer.playVideo();
+      });
+
+      const thumb = document.getElementById("now-thumb");
+      if (thumb) {
+        thumb.innerHTML = t.thumb ? '<img src="' + t.thumb + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:8px;">' : "";
+      }
+    }
+
+    if (t.type === "spotify") {
+      const host = document.getElementById("spotify-hidden-player");
+      host.innerHTML = "";
+
+      const iframe = document.createElement("iframe");
+      iframe.src = t.embedUrl;
+      iframe.width = "1";
+      iframe.height = "1";
+      iframe.allow = "autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture";
+      host.appendChild(iframe);
+    }
+
+    if (t.type === "local") {
+      const audio = new Audio(t.blobUrl);
+      audio.id = "audio-local";
+      audio.onended = playNext;
+      audio.play();
+      window._currentAudio = audio;
+    }
+
+    isPlaying = true;
+    updateNowPlaying(t);
+
+    const btn = document.getElementById("btn-play");
+    if (btn) btn.textContent = "⏸";
+  };
+
+  console.log("[RunSpace Music] YouTube link support enabled");
+})();
+
+/* RunSpace Music – personal/custom UI patch */
+(function runspaceCustomUiPatch() {
+  const RECENT_KEY = "runspace_music_recent_tracks";
+  const SETTINGS_KEY = "runspace_music_settings";
+
+  const defaultSettings = {
+    username: "",
+    accent: "#5865f2",
+    compactMode: false,
+    showTrending: true,
+    showRecent: true
+  };
+
+  function getSettings() {
+    try {
+      return { ...defaultSettings, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}") };
+    } catch {
+      return { ...defaultSettings };
+    }
+  }
+
+  function saveSettings(settings) {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  }
+
+  function el(id) {
+    return document.getElementById(id);
+  }
+
+  function safeText(value, fallback = "") {
+    return String(value || fallback).replace(/[&<>"']/g, function(s) {
+      return ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      })[s];
+    });
+  }
+
+  function applySettings() {
+    const settings = getSettings();
+
+    document.documentElement.style.setProperty("--accent", settings.accent);
+
+    if (settings.compactMode) {
+      document.body.classList.add("music-compact");
+    } else {
+      document.body.classList.remove("music-compact");
+    }
+
+    const greeting = el("greeting");
+    if (greeting) {
+      const name =
+        settings.username ||
+        localStorage.getItem("runspace_username") ||
+        localStorage.getItem("username") ||
+        "";
+
+      greeting.innerHTML = name
+        ? "Welcome back, <span>" + safeText(name) + "</span>"
+        : "Welcome back";
+    }
+
+    const recentSection = el("recent-row")?.closest("section");
+    const trendingSection = el("trending-row")?.closest("section");
+
+    if (recentSection) recentSection.style.display = settings.showRecent ? "" : "none";
+    if (trendingSection) trendingSection.style.display = settings.showTrending ? "" : "none";
+  }
+
+  function getRecent() {
+    try {
+      return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+    } catch {
+      return [];
+    }
+  }
+
+  function saveRecentTrack(track) {
+    if (!track) return;
+
+    const item = {
+      id: track.id,
+      title: track.title || "Unknown title",
+      artist: track.artist || track.type || "",
+      type: track.type || "unknown",
+      thumb: track.thumb || "",
+      videoId: track.videoId || "",
+      addedAt: Date.now()
+    };
+
+    const recent = getRecent()
+      .filter(x => String(x.id) !== String(item.id))
+      .filter(x => x.title !== item.title);
+
+    recent.unshift(item);
+
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recent.slice(0, 12)));
+  }
+
+  function sourceLabel(track) {
+    if (!track) return "Music";
+    if (track.type === "youtube") return "YouTube";
+    if (track.type === "spotify") return "Spotify";
+    if (track.type === "local") return "Local";
+    return "Music";
+  }
+
+  function sourceIcon(track) {
+    if (!track) return "♪";
+    if (track.type === "youtube") return "▶";
+    if (track.type === "spotify") return "●";
+    if (track.type === "local") return "◆";
+    return "♪";
+  }
+
+  function renderCardRow(containerId, items, emptyText) {
+    const row = el(containerId);
+    if (!row) return;
+
+    row.innerHTML = "";
+
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "music-empty-line";
+      empty.textContent = emptyText;
+      row.appendChild(empty);
+      return;
+    }
+
+    items.slice(0, 8).forEach(function(track) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "music-card";
+
+      const bg = track.thumb
+        ? 'style="background-image:url(' + safeText(track.thumb) + ')"'
+        : "";
+
+      card.innerHTML =
+        '<div class="music-card-art" ' + bg + '>' +
+          (!track.thumb ? '<span>' + sourceIcon(track) + '</span>' : "") +
+        '</div>' +
+        '<div class="music-card-title">' + safeText(track.title, "Unknown title") + '</div>' +
+        '<div class="music-card-sub">' + safeText(sourceLabel(track)) + '</div>';
+
+      card.addEventListener("click", function() {
+        const idx = tracks.findIndex(t =>
+          String(t.id) === String(track.id) ||
+          (track.videoId && t.videoId === track.videoId) ||
+          t.title === track.title
+        );
+
+        if (idx >= 0 && typeof playTrack === "function") {
+          playTrack(idx);
+        }
+      });
+
+      row.appendChild(card);
+    });
+  }
+
+  function renderDashboardCards() {
+    const recent = getRecent();
+
+    const availableTracks = Array.isArray(tracks) ? tracks : [];
+
+    const trending = availableTracks.length
+      ? availableTracks.slice(0, 8)
+      : [
+          {
+            title: "Add a YouTube link to get started",
+            artist: "RunSpace Music",
+            type: "youtube",
+            thumb: ""
+          },
+          {
+            title: "Build your own playlist",
+            artist: "RunSpace Music",
+            type: "spotify",
+            thumb: ""
+          }
+        ];
+
+    renderCardRow("recent-row", recent, "Nothing played yet. Start a track and this will fill automatically.");
+    renderCardRow("trending-row", trending, "Add music and this row will fill automatically.");
+  }
+
+  function installSettingsMenu() {
+    if (document.getElementById("runspace-music-settings-menu")) return;
+
+    const button = el("playlist-menu");
+    if (!button) return;
+
+    const menu = document.createElement("div");
+    menu.id = "runspace-music-settings-menu";
+    menu.className = "music-settings-menu";
+    menu.innerHTML =
+      '<button data-action="rename">Rename active playlist</button>' +
+      '<button data-action="username">Change display name</button>' +
+      '<button data-action="accent">Change accent color</button>' +
+      '<button data-action="compact">Toggle compact mode</button>' +
+      '<button data-action="recent">Show/hide recently played</button>' +
+      '<button data-action="trending">Show/hide trending now</button>' +
+      '<button data-action="clear-recent">Clear recently played</button>';
+
+    document.body.appendChild(menu);
+
+    button.addEventListener("click", function(e) {
+      e.stopPropagation();
+
+      const rect = button.getBoundingClientRect();
+      menu.style.left = Math.max(12, rect.right - 260) + "px";
+      menu.style.top = rect.bottom + 8 + "px";
+      menu.classList.toggle("open");
+    });
+
+    document.addEventListener("click", function() {
+      menu.classList.remove("open");
+    });
+
+    menu.addEventListener("click", async function(e) {
+      e.stopPropagation();
+
+      const action = e.target.getAttribute("data-action");
+      if (!action) return;
+
+      const settings = getSettings();
+
+      if (action === "username") {
+        const name = prompt("Display name:", settings.username || "");
+        if (name !== null) {
+          settings.username = name.trim();
+          saveSettings(settings);
+          applySettings();
+        }
+      }
+
+      if (action === "accent") {
+        const color = prompt("Accent color, for example #60a5fa or #5865f2:", settings.accent);
+        if (color && /^#[0-9a-fA-F]{6}$/.test(color.trim())) {
+          settings.accent = color.trim();
+          saveSettings(settings);
+          applySettings();
+        } else if (color) {
+          alert("Enter the color as hex, for example #60a5fa");
+        }
+      }
+
+      if (action === "compact") {
+        settings.compactMode = !settings.compactMode;
+        saveSettings(settings);
+        applySettings();
+      }
+
+      if (action === "recent") {
+        settings.showRecent = !settings.showRecent;
+        saveSettings(settings);
+        applySettings();
+      }
+
+      if (action === "trending") {
+        settings.showTrending = !settings.showTrending;
+        saveSettings(settings);
+        applySettings();
+      }
+
+      if (action === "clear-recent") {
+        localStorage.removeItem(RECENT_KEY);
+        renderDashboardCards();
+      }
+
+      if (action === "rename") {
+        const playlist = playlists.find(p => p.id === activePlaylistId);
+        if (!playlist) return;
+
+        const newName = prompt("New name:", playlist.name);
+        if (!newName || !newName.trim()) return;
+
+        playlist.name = newName.trim();
+
+        if (typeof dbPut === "function") {
+          await dbPut("playlists", playlist);
+        }
+
+        if (typeof renderSidebar === "function") renderSidebar();
+      }
+
+      menu.classList.remove("open");
+    });
+  }
+
+  const oldRenderSidebar = window.renderSidebar || renderSidebar;
+  window.renderSidebar = renderSidebar = function() {
+    const list = el("playlist-list");
+    if (!list) return;
+
+    list.innerHTML = "";
+
+    const fixed = [
+      { label: "Playlists", type: "header" },
+      { label: "Liked songs", type: "static" },
+      { label: "Local files", type: "static" }
+    ];
+
+    fixed.forEach(function(item) {
+      const li = document.createElement("li");
+      li.className = "nav__item nav__item-soft";
+      li.textContent = item.label;
+      list.appendChild(li);
+    });
+
+    playlists.forEach(function(p) {
+      const li = document.createElement("li");
+      li.className = "nav__item" + (p.id === activePlaylistId ? " active" : "");
+      li.innerHTML =
+        '<span class="nav-name">' + safeText(p.name) + '</span>' +
+        '<span class="nav-count">' +
+          ((Array.isArray(tracks) && p.id === activePlaylistId) ? tracks.length : "") +
+        '</span>';
+
+      li.onclick = function() {
+        activePlaylistId = p.id;
+        if (typeof renderSidebar === "function") renderSidebar();
+        if (typeof loadTracks === "function") loadTracks();
+      };
+
+      list.appendChild(li);
+    });
+  };
+
+  const oldRenderTrackTable = window.renderTrackTable || renderTrackTable;
+  window.renderTrackTable = renderTrackTable = function() {
+    const tbody = el("track-tbody");
+    if (!tbody) return;
+
+    tbody.innerHTML = "";
+
+    if (!tracks.length) {
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td colspan="5" class="music-table-empty">' +
+          'Paste a YouTube or Spotify link into the search field to get started.' +
+        '</td>';
+      tbody.appendChild(tr);
+    }
+
+    tracks.forEach(function(t, i) {
+      const tr = document.createElement("tr");
+      tr.dataset.idx = i;
+      tr.className = i === currentIdx ? "is-current-track" : "";
+
+      tr.innerHTML =
+        '<td class="source-cell"><span class="source source-' + safeText(t.type) + '">' + sourceIcon(t) + '</span></td>' +
+        '<td>' +
+          '<div class="track-title-cell">' +
+            (t.thumb ? '<img src="' + safeText(t.thumb) + '" alt="">' : '<span class="mini-art">' + sourceIcon(t) + '</span>') +
+            '<div>' +
+              '<div class="track-main-title">' + safeText(t.title, "Unknown title") + '</div>' +
+              '<div class="track-sub-title">' + safeText(sourceLabel(t)) + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</td>' +
+        '<td>' + safeText(t.artist || sourceLabel(t)) + '</td>' +
+        '<td style="text-align:right">' + safeText(t.length || "–") + '</td>' +
+        '<td style="text-align:center"><button class="row-menu-btn" type="button">⋯</button></td>';
+
+      tr.addEventListener("click", function(e) {
+        if (e.target.closest("button")) return;
+        if (typeof playTrack === "function") playTrack(i);
+      });
+
+      tbody.appendChild(tr);
+    });
+
+    const count = el("playlist-count");
+    if (count) count.textContent = tracks.length + " tracks";
+
+    renderDashboardCards();
+  };
+
+  const oldUpdateNowPlaying = window.updateNowPlaying || updateNowPlaying;
+  window.updateNowPlaying = updateNowPlaying = function(track) {
+    const title = el("now-title");
+    const artist = el("now-artist");
+    const thumb = el("now-thumb");
+
+    if (title) title.textContent = track?.title || "No track selected";
+    if (artist) artist.textContent = track ? sourceLabel(track) : "—";
+
+    if (thumb && track?.thumb) {
+      thumb.innerHTML = '<img src="' + safeText(track.thumb) + '" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:8px;">';
+    } else if (thumb) {
+      thumb.textContent = sourceIcon(track);
+    }
+  };
+
+  const oldPlayTrack = window.playTrack || playTrack;
+  window.playTrack = playTrack = function(idx) {
+    if (idx < 0 || idx >= tracks.length) return;
+    const track = tracks[idx];
+
+    saveRecentTrack(track);
+
+    oldPlayTrack(idx);
+
+    setTimeout(function() {
+      renderTrackTable();
+      renderDashboardCards();
+    }, 50);
+  };
+
+  function injectStyles() {
+    if (document.getElementById("runspace-custom-music-style")) return;
+
+    const style = document.createElement("style");
+    style.id = "runspace-custom-music-style";
+    style.textContent = `
+      .greeting span {
+        color: var(--accent);
+      }
+
+      .card-row {
+        min-height: 142px;
+        align-items: stretch;
+      }
+
+      .music-empty-line {
+        color: var(--text-muted);
+        border: 1px dashed var(--border);
+        border-radius: 14px;
+        padding: 18px;
+        min-width: 280px;
+        display: flex;
+        align-items: center;
+      }
+
+      .music-card {
+        width: 144px;
+        min-width: 144px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,.035);
+        color: var(--text-primary);
+        border-radius: 16px;
+        padding: 10px;
+        text-align: left;
+        cursor: pointer;
+        transition: transform .15s ease, background .15s ease, border-color .15s ease;
+      }
+
+      .music-card:hover {
+        transform: translateY(-2px);
+        background: rgba(255,255,255,.06);
+        border-color: rgba(255,255,255,.18);
+      }
+
+      .music-card-art {
+        height: 82px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, rgba(88,101,242,.28), rgba(255,255,255,.06));
+        background-size: cover;
+        background-position: center;
+        display: grid;
+        place-items: center;
+        margin-bottom: 9px;
+        overflow: hidden;
+      }
+
+      .music-card-art span {
+        font-size: 26px;
+        color: var(--accent);
+      }
+
+      .music-card-title {
+        font-size: 13px;
+        font-weight: 750;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .music-card-sub {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 3px;
+      }
+
+      .nav-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .nav-count {
+        color: var(--text-muted);
+        font-size: 12px;
+      }
+
+      .nav__item-soft {
+        color: var(--text-secondary);
+        background: transparent !important;
+      }
+
+      .source {
+        width: 26px;
+        height: 26px;
+        border-radius: 999px;
+        display: inline-grid;
+        place-items: center;
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .source-youtube {
+        background: rgba(239,68,68,.16);
+        color: #f87171;
+      }
+
+      .source-spotify {
+        background: rgba(34,197,94,.16);
+        color: #4ade80;
+      }
+
+      .source-local {
+        background: rgba(96,165,250,.16);
+        color: #60a5fa;
+      }
+
+      .track-title-cell {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .track-title-cell img,
+      .mini-art {
+        width: 38px;
+        height: 38px;
+        border-radius: 8px;
+        flex: 0 0 auto;
+        object-fit: cover;
+        background: rgba(255,255,255,.05);
+        display: grid;
+        place-items: center;
+      }
+
+      .track-main-title {
+        font-weight: 650;
+        max-width: 760px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .track-sub-title {
+        color: var(--text-muted);
+        font-size: 12px;
+        margin-top: 3px;
+      }
+
+      .is-current-track {
+        background: rgba(88,101,242,.10);
+      }
+
+      .row-menu-btn {
+        border: 0;
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 18px;
+        cursor: pointer;
+      }
+
+      .music-table-empty {
+        color: var(--text-muted);
+        text-align: center;
+        padding: 34px !important;
+        border: 1px dashed var(--border);
+        border-radius: 14px;
+      }
+
+      .music-settings-menu {
+        position: fixed;
+        z-index: 5000;
+        width: 260px;
+        display: none;
+        background: #111827;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 8px;
+        box-shadow: 0 18px 60px rgba(0,0,0,.45);
+      }
+
+      .music-settings-menu.open {
+        display: block;
+      }
+
+      .music-settings-menu button {
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: var(--text-primary);
+        text-align: left;
+        padding: 10px 11px;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+
+      .music-settings-menu button:hover {
+        background: rgba(255,255,255,.07);
+      }
+
+      body.music-compact .scroll-area {
+        gap: 20px;
+        padding-top: 18px;
+      }
+
+      body.music-compact .card-row {
+        min-height: 112px;
+      }
+
+      body.music-compact .music-card {
+        width: 118px;
+        min-width: 118px;
+      }
+
+      body.music-compact .music-card-art {
+        height: 58px;
+      }
+
+      body.music-compact .table th,
+      body.music-compact .table td {
+        padding: 7px 10px;
+      }
+    `;
+
+    document.head.appendChild(style);
+  }
+
+  function boot() {
+    injectStyles();
+    applySettings();
+    installSettingsMenu();
+
+    setTimeout(function() {
+      try {
+        if (typeof renderSidebar === "function") renderSidebar();
+        if (typeof renderTrackTable === "function") renderTrackTable();
+        renderDashboardCards();
+      } catch (e) {
+        console.warn("[RunSpace Music] Custom UI patch delayed", e);
+      }
+    }, 250);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+
+  console.log("[RunSpace Music] Custom UI enabled");
+})();

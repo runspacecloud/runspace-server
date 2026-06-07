@@ -1,0 +1,74 @@
+{
+  "name": "RunSpace",
+  "short_name": "RunSpace",
+  "description": "Privacy-first, self-hosted encrypted chat platform.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "orientation": "portrait",
+  "background_color": "#0a0f1a",
+  "theme_color": "#0a0f1a",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": [
+    "social",
+    "communication"
+  ],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-192-maskable.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Messages",
+      "short_name": "Messages",
+      "description": "Open encrypted DMs",
+      "url": "/chatt?source=shortcut",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Profile",
+      "short_name": "Profile",
+      "url": "/profile?source=shortcut",
+      "icons": [
+        {
+          "src": "/icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ],
+      "description": "View and edit your profile"
+    }
+  ],
+  "prefer_related_applications": false
+}

@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+
+<script>
+// ── Clear any stale data on page load ──
+sessionStorage.removeItem('_cached_user');
+// ── Device Token (persistent per browser) ──
+(function() {
+  let tok = localStorage.getItem('rs_device_token');
+  if (!tok) {
+    tok = 'web-' + Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('');
+    localStorage.setItem('rs_device_token', tok);
+  }
+  window._rsDeviceToken = tok;
+
+  const _origFetch = window.fetch;
+  window.fetch = function(url, opts={}) {
+    opts.headers = opts.headers || {};
+    if (typeof opts.headers === 'object' && !Array.isArray(opts.headers)) {
+      opts.headers['X-Device-Token'] = tok;
+      opts.headers['X-Device-Name'] = navigator.userAgent.slice(0, 50);
+    }
+    return _origFetch(url, opts);
+  };
+})();
+</script>
+
+<meta charset="UTF-8">
+<link rel="icon" href="/favicon.ico">
+<link rel="icon" type="image/png" sizes="1024x1024" href="/assets/runspace_icon_1024.png">
+<link rel="apple-touch-icon" sizes="1024x1024" href="/assets/runspace_icon_1024.png">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terms of Service · RunSpace</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&amp;family=DM+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+</head>
+
+<body>
+
+<!-- Starfield -->
+<div class="rs-star-canvas" id="rsStarCanvas" aria-hidden="true"></div>
+
+<!-- Mobile menu overlay -->
+<div class="menu-overlay" onclick="document.body.classList.remove('menu-open')" aria-hidden="true"></div>
+
+<div class="shell">
+
+  <!-- Sidebar -->
+  <aside class="side">
+    <button class="side-close" onclick="document.body.classList.remove('menu-open')" aria-label="Close menu">×</button>
+    <a href="/" class="logo">
+      <div class="logo-icon">R</div>
+      <span>RunSpace</span>
+    </a>
+
+    <div class="nav-label">Platform</div>
+    <a class="nav-item" href="/">
+      <svg class="nav-icon" viewBox="0 0 24 24"><path d="M3 12l9-9 9 9"/><path d="M5 10v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V10"/></svg>
+      Home
+    </a>
+    <a class="nav-item" href="/about">
+      <svg class="nav-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="8" r="0.5" fill="currentColor"/></svg>
+      About
+    </a>
+    <a class="nav-item" href="/download">
+      <svg class="nav-icon" viewBox="0 0 24 24"><path d="M12 3v11"/><polyline points="7 10 12 15 17 10"/><path d="M4 18v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></svg>
+      Download
+    </a>
+    <a class="nav-item" href="/news">
+      <svg class="nav-icon" viewBox="0 0 24 24"><path d="M4 5h13a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5z"/><path d="M18 8h2a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><line x1="7" y1="9" x2="15" y2="9"/><line x1="7" y1="13" x2="15" y2="13"/><line x1="7" y1="17" x2="11" y2="17"/></svg>
+      News
+    </a>
+
+    <div class="nav-label">Legal</div>
+    <a class="nav-item active" href="/terms" aria-current="page">
+      <svg class="nav-icon" viewBox="0 0 24 24"><path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7z"/><polyline points="14 3 14 7 18 7"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>
+      Terms
+    </a>
+    <a class="nav-item" href="/privacy">
+      <svg class="nav-icon" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.5 8.5-8 9-4.5-.5-8-4.5-8-9V6l8-3z"/><polyline points="9 12 11 14 15 10"/></svg>
+      Privacy
+    </a>
+
+    <div class="side-footer">v1.0 · Effective 2026-04-22</div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <header class="top">
+      <button class="menu-toggle" onclick="document.body.classList.toggle('menu-open')" aria-label="Toggle menu">☰</button>
+      <div class="top-title">
+        <span>Legal</span>
+        <span class="top-title-sep">/</span>
+        <span style="color:var(--text)">Terms of Service</span>
+      </div>
+      <div class="top-right">
+        <button class="lang-btn active">EN</button>
+        <button class="lang-btn">SV</button>
+      </div>
+    </header>
+
+    <div class="page">
+
+      <!-- Hero -->
+      <section class="terms-hero fade-up">
+        <div class="terms-hero-eyebrow">
+          <span class="terms-hero-eyebrow-dot"></span>
+          Privacy · Freedom · Control
+        </div>
+        <h1>Terms of Service</h1>
+        <div class="terms-hero-meta">Last updated 2026-04-22 · Effective immediately</div>
+        <p class="terms-hero-lede">
+          These are the rules for using RunSpace. They're written to be readable, not to trap you. By creating an account or using the service, you agree to what's here. If you don't agree, don't use it.
+        </p>
+      </section>
+
+      <!-- TOC -->
+      <section class="toc fade-up d1">
+        <div class="toc-title">Contents</div>
+        <div class="toc-grid">
+          <a class="toc-link" href="#acceptance"><span class="toc-num">01</span>Acceptance</a>
+          <a class="toc-link" href="#service"><span class="toc-num">02</span>The service</a>
+          <a class="toc-link" href="#accounts"><span class="toc-num">03</span>Accounts</a>
+          <a class="toc-link" href="#conduct"><span class="toc-num">04</span>Acceptable use</a>
+          <a class="toc-link" href="#content"><span class="toc-num">05</span>Your content</a>
+          <a class="toc-link" href="#moderation"><span class="toc-num">06</span>Moderation</a>
+          <a class="toc-link" href="#encryption"><span class="toc-num">07</span>Encryption &amp; limits</a>
+          <a class="toc-link" href="#availability"><span class="toc-num">08</span>Availability</a>
+          <a class="toc-link" href="#termination"><span class="toc-num">09</span>Termination</a>
+          <a class="toc-link" href="#liability"><span class="toc-num">10</span>Liability</a>
+          <a class="toc-link" href="#changes"><span class="toc-num">11</span>Changes</a>
+          <a class="toc-link" href="#law"><span class="toc-num">12</span>Governing law</a>
+        </div>
+      </section>
+
+      <!-- 01 -->
+      <section class="section fade-up d2" id="acceptance">
+        <div class="section-head">
+          <span class="section-num">01</span>
+          <h2>Acceptance</h2>
+        </div>
+        <p>By creating an account, signing in, or otherwise using RunSpace (<code>runspace.cloud</code>), you agree to these Terms of Service and to our <a href="/privacy">Privacy Policy</a>. If you're using the service on behalf of an organisation, you confirm you have the authority to bind that organisation to these terms.</p>
+        <p>If you don't agree to any part of these terms, don't use the service.</p>
+      </section>
+
+      <!-- 02 -->
+      <section class="section fade-up d2" id="service">
+        <div class="section-head">
+          <span class="section-num">02</span>
+          <h2>The service</h2>
+        </div>
+        <p>RunSpace is a self-hosted, privately operated chat platform. It is provided on an <strong>as-is basis</strong> by an individual — not a company. Features include direct messages, group chats, public channels, voice and video calls, file sharing, and a desktop client.</p>
+        <p>The service is provided free of charge. There is no premium tier, no advertising, and no data sales.</p>
+      </section>
+
+      <!-- 03 -->
+      <section class="section fade-up d3" id="accounts">
+        <div class="section-head">
+          <span class="section-num">03</span>
+          <h2>Accounts</h2>
+        </div>
+
+        <h3>Creating an account</h3>
+        <ul>
+          <li>You must provide a valid email address for verification.</li>
+          <li>You must be at least 13 years old, or 16 where that is the local digital-consent threshold under the GDPR.</li>
+          <li>You are responsible for choosing a strong password and keeping your credentials secure.</li>
+          <li>One person, one account. Don't create multiple accounts to circumvent moderation.</li>
+        </ul>
+
+        <h3>Account security</h3>
+        <ul>
+          <li>You are responsible for all activity under your account.</li>
+          <li>Notify us immediately at <code>support@runspace.cloud</code> if you suspect unauthorised access.</li>
+          <li>We may require additional verification (email codes, hCaptcha) for suspicious activity.</li>
+        </ul>
+      </section>
+
+      <!-- 04 -->
+      <section class="section fade-up d3" id="conduct">
+        <div class="section-head">
+          <span class="section-num">04</span>
+          <h2>Acceptable use</h2>
+        </div>
+        <p>You agree not to use RunSpace to:</p>
+        <ul>
+          <li>Harass, threaten, stalk, or incite violence against any person or group.</li>
+          <li>Share child sexual abuse material (CSAM) or any content that sexualises minors. Zero tolerance — accounts are terminated and reported to appropriate authorities.</li>
+          <li>Distribute malware, phishing links, or attempt to compromise the service or other users.</li>
+          <li>Engage in spam, coordinated inauthentic behaviour, or mass unsolicited messaging.</li>
+          <li>Impersonate other individuals or organisations in a way intended to deceive.</li>
+          <li>Violate applicable laws, including those governing intellectual property, export controls, and privacy.</li>
+          <li>Circumvent moderation actions, trust scoring, or rate limits through alternate accounts or technical means.</li>
+          <li>Scrape, mirror, or redistribute service content without authorisation.</li>
+        </ul>
+
+        <div class="callout danger">
+          <strong>Hard line:</strong> CSAM, explicit threats of violence, and doxxing result in immediate termination without warning. We cooperate with law enforcement where legally required.
+        </div>
+      </section>
+
+      <!-- 05 -->
+      <section class="section fade-up d4" id="content">
+        <div class="section-head">
+          <span class="section-num">05</span>
+          <h2>Your content</h2>
+        </div>
+        <p><strong>You own what you post.</strong> RunSpace claims no ownership of the messages, files, or other content you send through the service.</p>
+        <p>You grant us a limited, non-exclusive, royalty-free licence to store, transmit, and display your content solely for the purpose of operating the service. This licence ends when you delete the content or your account, subject to technical backup retention periods.</p>
+
+        <h3>Public vs. private content</h3>
+        <ul>
+          <li><strong>Direct messages and group DMs</strong> are end-to-end encrypted. We cannot read them.</li>
+          <li><strong>Public channel messages</strong> are readable by the server because they are posted to a channel visible to other users. Treat public channels as public.</li>
+          <li><strong>Profile information</strong> (username, avatar, bio) is visible according to your privacy settings.</li>
+        </ul>
+
+        <p>You are solely responsible for the content you post. Don't post anything you don't have the right to share.</p>
+      </section>
+
+      <!-- 06 -->
+      <section class="section fade-up d4" id="moderation">
+        <div class="section-head">
+          <span class="section-num">06</span>
+          <h2>Moderation</h2>
+        </div>
+        <p>We reserve the right to review reported content, restrict accounts, and remove content that violates these terms. Because direct messages are end-to-end encrypted, moderation of private conversations relies on user reports rather than automated scanning.</p>
+
+        <h3>What moderation looks like</h3>
+        <ul>
+          <li><strong>Warning</strong> — for first-time or minor violations.</li>
+          <li><strong>Temporary restriction</strong> — reduced rate limits, loss of features, or a cooldown period.</li>
+          <li><strong>Suspension</strong> — account disabled for a defined period.</li>
+          <li><strong>Termination</strong> — account permanently closed. For severe violations this is immediate.</li>
+        </ul>
+
+        <h3>Appeals</h3>
+        <p>If you believe a moderation action was taken in error, you can appeal by emailing <code>support@runspace.cloud</code>. We aim to respond within 14 days. Appeals do not pause active restrictions.</p>
+      </section>
+
+      <!-- 07 -->
+      <section class="section fade-up" id="encryption">
+        <div class="section-head">
+          <span class="section-num">07</span>
+          <h2>Encryption &amp; limits</h2>
+        </div>
+        <p>RunSpace uses strong end-to-end encryption for direct messages, group DMs, and flagged uploads. This has practical consequences you should understand:</p>
+        <ul>
+          <li>The server operator cannot read encrypted messages. We cannot retrieve lost messages on your behalf.</li>
+          <li>If you lose all your devices without backing up your keys, your encrypted history is unrecoverable.</li>
+          <li>Message delivery depends on your devices being online at some point after a message is sent.</li>
+        </ul>
+
+        <div class="callout">
+          <strong>No key escrow.</strong> RunSpace will never add a backdoor, key escrow system, or ghost-participant feature — and will never hand over what we do not have. If law requires it, we will shut the service down rather than compromise this.
+        </div>
+      </section>
+
+      <!-- 08 -->
+      <section class="section fade-up" id="availability">
+        <div class="section-head">
+          <span class="section-num">08</span>
+          <h2>Availability &amp; changes to the service</h2>
+        </div>
+        <p>RunSpace is provided without any uptime guarantee. The service may be unavailable due to maintenance, infrastructure issues, software bugs, or circumstances beyond our reasonable control.</p>
+        <p>We may add, modify, or remove features at any time. We'll communicate significant changes via the <a href="/news">news page</a> or in-app notifications when reasonably possible.</p>
+      </section>
+
+      <!-- 09 -->
+      <section class="section fade-up" id="termination">
+        <div class="section-head">
+          <span class="section-num">09</span>
+          <h2>Termination</h2>
+        </div>
+
+        <h3>By you</h3>
+        <p>You can delete your account at any time from settings. Deletion removes your profile, authored messages, device keys, and trust history. Some aggregate abuse-signal counters may persist in anonymised form as described in the <a href="/privacy">Privacy Policy</a>.</p>
+
+        <h3>By us</h3>
+        <p>We may suspend or terminate your account if you violate these terms, if your account is inactive for an extended period, or if continued operation of your account poses a risk to other users or the service.</p>
+        <p>On termination, your right to use the service ends immediately. Clauses that by their nature should survive termination (content ownership, liability limits, governing law) will continue to apply.</p>
+      </section>
+
+      <!-- 10 -->
+      <section class="section fade-up" id="liability">
+        <div class="section-head">
+          <span class="section-num">10</span>
+          <h2>Disclaimers &amp; liability</h2>
+        </div>
+
+        <div class="callout warn">
+          <strong>Plain English:</strong> RunSpace is operated by one person as a free service, provided as-is. I do my best to keep it running, secure, and private, but I can't guarantee perfection, and I can't be on the hook for damages beyond what's reasonable for a free, self-hosted service.
+        </div>
+
+        <p>To the maximum extent permitted by applicable law:</p>
+        <ul>
+          <li>The service is provided "as is" and "as available" without warranties of any kind, express or implied, including warranties of merchantability, fitness for a particular purpose, or non-infringement.</li>
+          <li>We don't warrant that the service will be uninterrupted, error-free, secure against all possible threats, or that data will never be lost.</li>
+          <li>Our liability for any claim related to the service is limited to the amount you paid for the service in the 12 months preceding the claim — which for a free service is zero.</li>
+          <li>We are not liable for indirect, incidental, consequential, or punitive damages.</li>
+        </ul>
+        <p>Nothing in these terms excludes liability that cannot be excluded under mandatory consumer-protection law in your jurisdiction.</p>
+      </section>
+
+      <!-- 11 -->
+      <section class="section fade-up" id="changes">
+        <div class="section-head">
+          <span class="section-num">11</span>
+          <h2>Changes to these terms</h2>
+        </div>
+        <p>We may update these terms over time. When changes meaningfully affect your rights or obligations, we'll notify active users in-app and update the "last updated" date at the top of this page. Minor editorial changes (typos, clarifications) may be made without notice.</p>
+        <p>Continued use of the service after changes take effect means you accept the updated terms. If you don't accept them, delete your account.</p>
+      </section>
+
+      <!-- 12 -->
+      <section class="section fade-up" id="law">
+        <div class="section-head">
+          <span class="section-num">12</span>
+          <h2>Governing law &amp; disputes</h2>
+        </div>
+        <p>These terms are governed by the laws of Sweden, without regard to conflict-of-laws principles. Disputes arising from or relating to the service will be resolved in the competent courts of Sweden, unless mandatory consumer-protection law in your jurisdiction provides otherwise.</p>
+        <p>If any provision of these terms is found unenforceable, the remaining provisions continue in full effect.</p>
+      </section>
+
+      <!-- Contact -->
+      <section class="contact-card fade-up">
+        <div class="contact-icon">
+          <svg viewBox="0 0 24 24"><path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6z"/><polyline points="4 7 12 13 20 7"/></svg>
+        </div>
+        <div class="contact-text">
+          <div class="contact-label">Support &amp; questions</div>
+          <div class="contact-email">support@runspace.cloud</div>
+        </div>
+      </section>
+
+      <!-- Footer -->
+      <div class="page-footer">
+        <div class="page-footer-support">
+          <div class="page-footer-support-head">Support Hours <span class="page-footer-tz">(CET)</span></div>
+          <ul class="page-footer-hours">
+            <li><span>Mon–Thu</span><span>12:00–21:00</span></li>
+            <li><span>Fri</span><span>12:00–00:00</span></li>
+            <li><span>Sat</span><span>14:30–00:00</span></li>
+            <li><span>Sun</span><span>14:30–21:00</span></li>
+          </ul>
+          <div class="page-footer-support-note">
+            Outside these hours: <a href="/support">open a ticket</a> and we'll respond as soon as possible.
+          </div>
+        </div>
+        <div class="page-footer-bottom">
+          <div class="page-footer-tagline">
+            <span>RunSpace</span>
+            <span class="page-footer-dot"></span>
+            <span>Privacy · Freedom · Control</span>
+          </div>
+          <div>© 2026</div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script>
+// ── Starfield ──
+(function(){
+  const canvas = document.getElementById('rsStarCanvas');
+  if (!canvas) return;
+  const count = 60;
+  for (let i = 0; i < count; i++) {
+    const dot = document.createElement('div');
+    dot.className = 'rs-star-dot';
+    const size = Math.random() * 2 + 0.5;
+    const duration = Math.random() * 30 + 20;
+    const delay = Math.random() * -50;
+    const opacity = Math.random() * 0.5 + 0.2;
+    dot.style.width = size + 'px';
+    dot.style.height = size + 'px';
+    dot.style.left = (Math.random() * 100) + '%';
+    dot.style.background = Math.random() > 0.85 ? '#3b7dff' : '#eaf0ff';
+    dot.style.opacity = opacity;
+    dot.style.animationDuration = duration + 's';
+    dot.style.animationDelay = delay + 's';
+    dot.style.boxShadow = size > 1.5 ? '0 0 ' + (size * 2) + 'px currentColor' : 'none';
+    canvas.appendChild(dot);
+  }
+})();
+
+// ── Escape closes mobile menu ──
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape') document.body.classList.remove('menu-open');
+});
+
+// ── Close menu on nav click (mobile) ──
+document.querySelectorAll('.side .nav-item').forEach(function(el){
+  el.addEventListener('click', function(){
+    if (window.innerWidth <= 900) document.body.classList.remove('menu-open');
+  });
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RunSpace • Change Key Passphrase</title>
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+
+body{
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+  font-family:Inter,Segoe UI,Arial,sans-serif;
+  background:
+    radial-gradient(circle at 80% 10%,rgba(37,99,235,.12),transparent 32%),
+    radial-gradient(circle at 10% 95%,rgba(14,165,233,.08),transparent 28%),
+    #050712;
+  color:#f8fafc;
+  overflow:hidden;
+}
+
+body:before{
+  content:"";
+  position:fixed;
+  inset:0;
+  background-image:
+    radial-gradient(#ffffffaa 1px,transparent 1px),
+    radial-gradient(#ffffff55 1px,transparent 1px);
+  background-size:140px 140px,220px 220px;
+  background-position:20px 30px,90px 100px;
+  opacity:.55;
+  pointer-events:none;
+}
+
+.card{
+  position:relative;
+  width:100%;
+  max-width:520px;
+  background:linear-gradient(180deg,rgba(21,25,37,.96),rgba(10,12,22,.96));
+  border:1px solid rgba(148,163,184,.12);
+  border-radius:14px;
+  box-shadow:0 30px 90px rgba(0,0,0,.55);
+  overflow:hidden;
+  z-index:1;
+}
+
+.top{
+  padding:30px 32px 24px;
+  border-bottom:1px solid rgba(148,163,184,.13);
+}
+
+.brand{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-bottom:26px;
+  font-weight:800;
+  letter-spacing:.2px;
+}
+
+.logo{
+  width:31px;
+  height:31px;
+  border-radius:8px;
+  display:grid;
+  place-items:center;
+  background:#3b82f6;
+  box-shadow:0 0 24px rgba(59,130,246,.45);
+}
+
+h1{
+  font-size:25px;
+  margin-bottom:12px;
+  letter-spacing:-.03em;
+}
+
+.sub{
+  color:#737b91;
+  font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
+  font-size:13px;
+}
+
+.body{
+  padding:26px 32px 32px;
+}
+
+.notice{
+  display:flex;
+  gap:12px;
+  padding:15px;
+  border:1px solid rgba(59,130,246,.35);
+  border-radius:8px;
+  background:rgba(37,99,235,.12);
+  color:#b9c4d8;
+  font-size:13px;
+  line-height:1.5;
+  margin-bottom:18px;
+}
+
+.info{
+  width:18px;
+  height:18px;
+  border-radius:999px;
+  display:grid;
+  place-items:center;
+  flex:0 0 auto;
+  background:#3b82f6;
+  color:white;
+  font-size:12px;
+  font-weight:900;
+}
+
+.drop{
+  border:1px dashed rgba(148,163,184,.25);
+  background:#101625;
+  border-radius:8px;
+  padding:34px 18px;
+  text-align:center;
+  cursor:pointer;
+  margin-bottom:20px;
+  color:#cbd5e1;
+}
+
+.drop:hover{
+  border-color:#3b82f6;
+  background:#121b2f;
+}
+
+.lock{
+  font-size:31px;
+  margin-bottom:13px;
+}
+
+.file-name{
+  margin-top:9px;
+  color:#60a5fa;
+  font-size:13px;
+  word-break:break-all;
+}
+
+input[type=file]{
+  display:none;
+}
+
+label{
+  display:block;
+  margin:18px 0 8px;
+  color:#788195;
+  font-size:12px;
+  font-weight:800;
+  letter-spacing:.12em;
+  text-transform:uppercase;
+}
+
+.pass-wrap{
+  position:relative;
+}
+
+.pass-wrap input{
+  padding-right:48px;
+}
+
+.eye{
+  position:absolute;
+  right:13px;
+  top:50%;
+  transform:translateY(-50%);
+  color:#778097;
+  cursor:pointer;
+  user-select:none;
+}
+
+input[type=password],
+input[type=text]{
+  width:100%;
+  border:1px solid rgba(148,163,184,.18);
+  border-radius:8px;
+  background:#0b0d18;
+  color:#e5e7eb;
+  padding:14px 15px;
+  font-size:14px;
+  outline:none;
+}
+
+input:focus{
+  border-color:#3b82f6;
+}
+
+button{
+  width:100%;
+  margin-top:18px;
+  border:0;
+  border-radius:8px;
+  padding:15px;
+  background:#3478f6;
+  color:white;
+  font-weight:800;
+  font-size:15px;
+  cursor:pointer;
+  box-shadow:0 14px 28px rgba(52,120,246,.25);
+}
+
+button:hover{
+  filter:brightness(1.06);
+}
+
+#out{
+  margin-top:18px;
+  font-size:13px;
+  line-height:1.55;
+  color:#93c5fd;
+  white-space:pre-wrap;
+}
+
+.back{
+  position:absolute;
+  top:30px;
+  right:32px;
+  color:#4b5563;
+  border:1px solid rgba(148,163,184,.12);
+  border-radius:7px;
+  padding:8px 11px;
+  font-size:12px;
+  text-decoration:none;
+}
+</style>
+</head>
+
+<body>
+<div class="card">
+  <a class="back" href="/">back</a>
+
+  <div class="top">
+    <div class="brand">
+      <div class="logo">🛡️</div>
+      <div>RunSpace</div>
+    </div>
+
+    <h1>Change key passphrase</h1>
+    <div class="sub">re-encrypt your account key locally</div>
+  </div>
+
+  <div class="body">
+    <div class="notice">
+      <div class="info">i</div>
+      <div>
+        Decryption and encryption happen entirely in your browser.
+        Your key and passphrase never leave your device.
+      </div>
+    </div>
+
+    <label for="file" class="drop" id="drop">
+      <div class="lock">🔐</div>
+      <div>Click or drag your <b>runspace.key</b> file here</div>
+      <div class="file-name" id="fileName"></div>
+    </label>
+    <input id="file" type="file" accept=".key">
+
+    <label>Current passphrase</label>
+    <div class="pass-wrap">
+      <input id="oldPass" type="password" placeholder="enter current passphrase">
+      <span class="eye" data-target="oldPass">◉</span>
+    </div>
+
+    <label>New passphrase</label>
+    <div class="pass-wrap">
+      <input id="newPass" type="password" placeholder="enter new passphrase">
+      <span class="eye" data-target="newPass">◉</span>
+    </div>
+
+    <label>Confirm new passphrase</label>
+    <div class="pass-wrap">
+      <input id="newPass2" type="password" placeholder="confirm new passphrase">
+      <span class="eye" data-target="newPass2">◉</span>
+    </div>
+
+    <button id="btn">Generate new key file</button>
+
+    <div id="out"></div>
+  </div>
+</div>
+
+<script>
+const enc=new TextEncoder();
+const dec=new TextDecoder();
+const out=document.getElementById("out");
+const fileInput=document.getElementById("file");
+const fileName=document.getElementById("fileName");
+const drop=document.getElementById("drop");
+
+fileInput.onchange=()=>{
+  fileName.textContent=fileInput.files[0] ? fileInput.files[0].name : "";
+};
+
+drop.ondragover=e=>{
+  e.preventDefault();
+  drop.style.borderColor="#3b82f6";
+};
+
+drop.ondragleave=()=>{
+  drop.style.borderColor="rgba(148,163,184,.25)";
+};
+
+drop.ondrop=e=>{
+  e.preventDefault();
+  drop.style.borderColor="rgba(148,163,184,.25)";
+  if(e.dataTransfer.files[0]){
+    fileInput.files=e.dataTransfer.files;
+    fileName.textContent=e.dataTransfer.files[0].name;
+  }
+};
+
+document.querySelectorAll(".eye").forEach(x=>{
+  x.onclick=()=>{
+    const input=document.getElementById(x.dataset.target);
+    input.type=input.type==="password" ? "text" : "password";
+  };
+});
+
+async function derive(pass,salt){
+  const base=await crypto.subtle.importKey("raw",enc.encode(pass),"PBKDF2",false,["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    {name:"PBKDF2",salt:salt,iterations:100000,hash:"SHA-256"},
+    base,
+    {name:"AES-GCM",length:256},
+    false,
+    ["encrypt","decrypt"]
+  );
+}
+
+async function decryptFile(buf,pass){
+  const d=new Uint8Array(buf);
+  if(dec.decode(d.slice(0,4))!=="RSK1") throw new Error("Invalid key file.");
+  const salt=d.slice(4,20);
+  const iv=d.slice(20,32);
+  const cipher=d.slice(32);
+  const key=await derive(pass,salt);
+  const plain=await crypto.subtle.decrypt({name:"AES-GCM",iv:iv},key,cipher);
+  return dec.decode(plain);
+}
+
+async function encryptFile(accountKey,pass){
+  const header=enc.encode("RSK1");
+  const salt=crypto.getRandomValues(new Uint8Array(16));
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const key=await derive(pass,salt);
+  const cipher=new Uint8Array(await crypto.subtle.encrypt(
+    {name:"AES-GCM",iv:iv},
+    key,
+    enc.encode(accountKey)
+  ));
+
+  const result=new Uint8Array(4+16+12+cipher.length);
+  result.set(header,0);
+  result.set(salt,4);
+  result.set(iv,20);
+  result.set(cipher,32);
+  return result;
+}
+
+
+
+const params = new URLSearchParams(location.search);
+const token = params.get("token");
+
+const cardBody = document.querySelector(".body");
+
+async function validateToken(){
+  if(!token){
+    cardBody.innerHTML='<div style="color:#f87171">Missing security token.</div>';
+    return false;
+  }
+
+  try{
+    const r = await fetch("/api/key-change/validate",{
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ token })
+    });
+
+    const j = await r.json();
+
+    if(!j.ok){
+      cardBody.innerHTML='<div style="color:#f87171">This security link is invalid, expired, or already used.</div>';
+      return false;
+    }
+
+    return true;
+
+  }catch{
+    cardBody.innerHTML='<div style="color:#f87171">Could not verify secure link.</div>';
+    return false;
+  }
+}
+
+async function consumeToken(){
+  await fetch("/api/key-change/consume",{
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ token })
+  });
+}
+
+
+
+await validateToken();
+
+document.getElementById("btn").onclick=async()=>{
+  try{
+    out.textContent="";
+
+    const file=fileInput.files[0];
+    const oldPass=document.getElementById("oldPass").value;
+    const newPass=document.getElementById("newPass").value;
+    const newPass2=document.getElementById("newPass2").value;
+
+    if(!file) throw new Error("Select your .key file.");
+    if(!oldPass) throw new Error("Enter your current passphrase.");
+    if(newPass.length<8) throw new Error("New passphrase must be at least 8 characters.");
+    if(newPass!==newPass2) throw new Error("New passphrases do not match.");
+
+    out.textContent="Decrypting key file...";
+    const accountKey=await decryptFile(await file.arrayBuffer(),oldPass);
+
+    out.textContent="Creating new encrypted key file...";
+    const newBytes=await encryptFile(accountKey,newPass);
+
+    const blob=new Blob([newBytes],{type:"application/octet-stream"});
+    const url=URL.createObjectURL(blob);
+
+    const a=document.createElement("a");
+    a.href=url;
+    a.download=file.name.replace(/\.key$/i,"")+".new.key";
+    a.click();
+
+    URL.revokeObjectURL(url);
+    
+await consumeToken();
+
+out.textContent="Success.\nYour new key file has been downloaded.\nSecurity link has now been destroyed.";
+
+  }catch(e){
+    out.textContent="Error: "+e.message;
+  }
+};
+</script>
+</body>
+</html>

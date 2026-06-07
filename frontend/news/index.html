@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script src="../theme.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>News — RunSpace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="rs-star-canvas" id="stars"></div>
+
+<div class="shell">
+
+  <!-- Sidebar -->
+  <aside class="side">
+    <a href="/" class="side-logo">
+      <div class="side-logo-mark">R</div>
+      RunSpace
+    </a>
+
+    <div class="side-group-label">Platform</div>
+
+    <a href="/" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Home
+    </a>
+    <a href="/about" class="side-item">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      About
+    </a>
+    <a href="/download" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Download
+    </a>
+    <a href="/news" class="side-item active">
+      <svg viewBox="0 0 24 24"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6z"/></svg>
+      News
+    </a>
+
+    <div class="side-group-label">Legal</div>
+
+    <a href="/tos" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Terms
+    </a>
+    <a href="/privacy" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Privacy
+    </a>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="wrap">
+
+      <!-- Hero -->
+      <div class="hero fu d1">
+        <p class="hero-kicker">News</p>
+        <h1>What's been<br>happening<em>.</em></h1>
+        <div class="hero-body">
+          <p>Updates, fixes and improvements to the RunSpace platform. No noise — just what changed and why.</p>
+        </div>
+      </div>
+
+      <!-- Filter bar -->
+      <div class="filter-bar fu d2">
+        <button class="filter-btn active" data-tag="all">All</button>
+        <button class="filter-btn" data-tag="launch">Launch</button>
+        <button class="filter-btn" data-tag="update">Update</button>
+        <button class="filter-btn" data-tag="fix">Fix</button>
+        <button class="filter-btn" data-tag="improvement">Improve</button>
+        <button class="filter-btn" data-tag="security">Security</button>
+      </div>
+
+      <!-- News feed -->
+      <div class="news-feed fu d3" id="news-feed">
+        <div class="news-skeleton">
+          <div class="skel-item"></div>
+          <div class="skel-item"></div>
+          <div class="skel-item"></div>
+        </div>
+      </div>
+
+      <!-- Empty state (hidden by default) -->
+      <div class="news-empty hidden" id="news-empty">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <p>No updates found.</p>
+      </div>
+
+      <!-- Error state (hidden by default) -->
+      <div class="news-error hidden" id="news-error">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <p>Could not load updates. <button id="retry-btn">Try again</button></p>
+      </div>
+
+      <!-- Admin panel (shown only for mx403) -->
+      <div class="admin-panel hidden" id="admin-panel">
+        <div class="section-label" style="margin-top:56px">Post update</div>
+        <form class="admin-form" id="admin-form">
+          <div class="admin-row">
+            <div class="admin-field">
+              <label>Title (EN)</label>
+              <input type="text" name="titleEn" placeholder="English title" maxlength="200" />
+            </div>
+            <div class="admin-field">
+              <label>Title (SV) <span class="admin-required">*</span></label>
+              <input type="text" name="titleSv" placeholder="Swedish title" maxlength="200" required />
+            </div>
+          </div>
+          <div class="admin-row">
+            <div class="admin-field">
+              <label>Body (EN)</label>
+              <textarea name="bodyEn" rows="3" placeholder="English description"></textarea>
+            </div>
+            <div class="admin-field">
+              <label>Body (SV) <span class="admin-required">*</span></label>
+              <textarea name="bodySv" rows="3" placeholder="Swedish description" required></textarea>
+            </div>
+          </div>
+          <div class="admin-bottom">
+            <select name="tag" class="admin-select">
+              <option value="update">Update</option>
+              <option value="fix">Fix</option>
+              <option value="improvement">Improvement</option>
+              <option value="security">Security</option>
+              <option value="launch">Launch</option>
+            </select>
+            <button type="submit" class="admin-submit">Post update</button>
+          </div>
+          <div id="admin-status" class="admin-status"></div>
+        </form>
+      </div>
+
+    </div>
+
+    <footer class="site-footer">
+      <p>RunSpace &copy; 2026</p>
+      <div class="footer-links">
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/tos">Terms</a>
+        <a href="/chatt">Open Chat</a>
+      </div>
+    </footer>
+  </div>
+
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

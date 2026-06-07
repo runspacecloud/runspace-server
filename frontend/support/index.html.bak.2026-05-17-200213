@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en"><head><script src="../theme.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Support · RunSpace</title>
+<link rel="icon" href="/favicon.ico">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+.main{padding:40px 48px;max-width:960px;position:relative;z-index:1}
+.page-eyebrow{font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px}
+.page-title{font-size:32px;font-weight:800;margin-bottom:8px}
+.page-sub{font-size:15px;color:var(--muted);margin-bottom:32px;line-height:1.6}
+.section-title{font-size:18px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px;margin-bottom:20px}
+.tabs{display:flex;gap:8px;margin-bottom:28px}
+.tab{padding:10px 20px;border-radius:10px;border:1px solid var(--border);background:none;color:var(--muted);font-size:13px;font-weight:700;cursor:pointer;transition:all .15s;font-family:var(--font-body)}
+.tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.tab.secondary{background:none;color:var(--muted)}
+.tab.secondary.active{background:rgba(59,125,255,.12);color:var(--accent);border-color:rgba(59,125,255,.2)}
+.form-group{margin-bottom:20px}
+.form-label{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;font-family:var(--font-mono)}
+.form-input,.form-select,.form-textarea{width:100%;background:var(--surface-2, var(--bg));border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:14px;font-family:var(--font-body);color:var(--text);outline:none;transition:border .2s,box-shadow .2s}
+.form-input:focus,.form-select:focus,.form-textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.form-textarea{resize:vertical;min-height:140px;line-height:1.6}
+.char-bar-wrap{margin-top:6px;display:flex;align-items:center;gap:8px}
+.char-bar{flex:1;height:3px;background:var(--border);border-radius:99px;overflow:hidden}
+.char-fill{height:100%;background:var(--accent);border-radius:99px;transition:width .2s}
+.char-count{font-size:11px;color:var(--muted);font-family:var(--font-mono);flex-shrink:0}
+.category-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-bottom:4px}
+.cat-option{padding:12px 14px;border-radius:10px;border:1px solid var(--border);cursor:pointer;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600;transition:all .15s;background:none;color:var(--text);font-family:var(--font-body)}
+.cat-option:hover{border-color:var(--border-hover);background:rgba(255,255,255,.03)}
+.cat-option.active{border-color:var(--accent);background:rgba(59,125,255,.08);color:var(--accent)}
+.cat-icon{font-size:18px;flex-shrink:0}
+.priority-row{display:flex;gap:8px}
+.prio-btn{flex:1;padding:10px;border-radius:8px;border:1px solid var(--border);background:none;cursor:pointer;font-size:12px;font-weight:700;font-family:var(--font-body);color:var(--muted);transition:all .15s}
+.prio-btn.active.low{border-color:#10b981;color:#10b981;background:rgba(16,185,129,.08)}
+.prio-btn.active.medium{border-color:#f59e0b;color:#f59e0b;background:rgba(245,158,11,.08)}
+.prio-btn.active.high{border-color:#ef4444;color:#ef4444;background:rgba(239,68,68,.08)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:11px 22px;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid var(--border);background:none;color:var(--text);text-decoration:none;transition:all .15s;font-family:var(--font-body)}
+.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent);font-size:14px;padding:13px 28px}
+.btn-primary:hover{background:var(--accent-hover,#2b6be6)}
+.btn-ghost{color:var(--muted)}
+.btn-discord{background:#5865f2;color:#fff;border-color:#5865f2}
+.submit-row{display:flex;align-items:center;gap:12px;margin-top:8px}
+.rate-limit-note{font-size:12px;color:var(--muted);line-height:1.5}
+.discord-card{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+.discord-icon{width:52px;height:52px;background:#5865f2;border-radius:14px;display:grid;place-items:center;flex-shrink:0;color:#fff}
+.discord-icon svg{width:28px;height:28px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.discord-text{flex:1}
+.discord-text h3{font-size:15px;font-weight:700;margin-bottom:4px}
+.discord-text p{font-size:13px;color:var(--muted);line-height:1.5}
+.discord-badges{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.badge{font-size:11px;font-weight:700;padding:4px 10px;border-radius:6px;font-family:var(--font-mono)}
+.badge.green{background:rgba(16,185,129,.12);color:#10b981}
+.badge.purple{background:rgba(88,101,242,.12);color:#5865f2}
+.status-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:700;font-family:var(--font-mono)}
+.status-chip.online{background:rgba(16,185,129,.12);color:#10b981}
+.status-chip.offline{background:rgba(239,68,68,.08);color:#ef4444}
+.status-dot-sm{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.hours-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px;margin-top:12px}
+.hour-chip{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12px;font-family:var(--font-mono)}
+.hour-day{color:var(--muted);margin-bottom:2px;font-size:11px}
+.hour-time{font-weight:700;color:var(--text)}
+.faq-list{display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
+.faq-item{border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.faq-q{padding:14px 16px;font-size:13px;font-weight:600;cursor:pointer;display:flex;justify-content:space-between;align-items:center;background:none;border:none;width:100%;text-align:left;color:var(--text);font-family:var(--font-body)}
+.faq-q:hover{background:rgba(255,255,255,.02)}
+.faq-a{padding:0 16px;font-size:13px;color:var(--muted);line-height:1.6;max-height:0;overflow:hidden;transition:max-height .3s,padding .3s}
+.faq-item.open .faq-a{max-height:200px;padding:0 16px 14px}
+.search-bar{display:flex;gap:10px;margin-bottom:20px}
+.search-bar input{flex:1;background:var(--surface-2,var(--bg));border:1px solid var(--border);border-radius:10px;padding:11px 14px;font-size:14px;color:var(--text);outline:none;font-family:var(--font-body)}
+.search-bar input:focus{border-color:var(--accent)}
+.ticket-list{display:flex;flex-direction:column;gap:10px}
+.ticket-item{border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;align-items:center;gap:14px}
+.ticket-status{padding:4px 10px;border-radius:6px;font-size:11px;font-weight:700;font-family:var(--font-mono);flex-shrink:0}
+.ticket-status.open{background:rgba(59,125,255,.12);color:var(--accent)}
+.ticket-status.pending{background:rgba(245,158,11,.12);color:#f59e0b}
+.ticket-status.resolved{background:rgba(16,185,129,.12);color:#10b981}
+.ticket-info{flex:1}
+.ticket-subject{font-size:14px;font-weight:600;margin-bottom:3px}
+.ticket-meta{font-size:12px;color:var(--muted);font-family:var(--font-mono)}
+.toast{position:fixed;top:24px;right:24px;z-index:999;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;display:flex;align-items:center;gap:12px;font-size:14px;font-weight:600;box-shadow:0 8px 32px rgba(0,0,0,.2);transform:translateX(120%);transition:transform .3s cubic-bezier(.4,0,.2,1)}
+.toast.show{transform:translateX(0)}
+.toast.success{border-color:rgba(16,185,129,.3);color:#10b981}
+.toast.error{border-color:rgba(239,68,68,.3);color:#ef4444}
+.hidden{display:none!important}
+.rs-star-canvas{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+.rs-star-dot{position:absolute;border-radius:50%;animation:rsFall linear infinite}
+@keyframes rsFall{from{transform:translateY(-10px);opacity:0}5%{opacity:1}95%{opacity:1}to{transform:translateY(100vh);opacity:0}}
+@media(max-width:700px){.main{padding:20px 16px}.category-grid{grid-template-columns:1fr 1fr}.hours-grid{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div id="rsStarCanvas" class="rs-star-canvas" aria-hidden="true"></div>
+<div class="shell">
+<aside class="side" id="sidebar">
+<div class="logo"><div class="logo-icon">R</div><span>RunSpace</span></div>
+<div class="nav-label">Menu</div>
+<a href="/" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24"><path d="M3 12l9-9 9 9"/><path d="M5 10v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V10"/></svg>Home</a>
+<a href="/chatt" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24"><path d="M4 5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-4 4v-4H5a1 1 0 0 1-1-1V5z"/></svg>Chat</a>
+<a href="/profile" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>Profile</a>
+<div class="nav-label">Help</div>
+<a href="/support" class="nav-item active"><svg class="nav-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-2.5 2-2.5 3.5"/><circle cx="12" cy="16.5" r="0.5" fill="currentColor" stroke="none"/></svg>Support</a>
+<a href="https://discord.gg/828fwVgdU3" target="_blank" rel="noopener" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24"><path d="M18 4H8a5 5 0 0 0-5 5v4a5 5 0 0 0 5 5h1l1.5 2.5a.5.5 0 0 0 .8 0L13 18h5a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3z"/><circle cx="9" cy="11" r="1"/><circle cx="15" cy="11" r="1"/></svg>Discord</a>
+<div class="side-footer">RunSpace © 2026</div>
+</aside>
+<main class="main">
+<div class="page-eyebrow">Help Center</div>
+<h1 class="page-title">Support</h1>
+<p class="page-sub">Describe your issue and we'll get back to you as quickly as possible. For urgent access issues, reach us on Discord.</p>
+
+<div class="tabs">
+  <button class="tab active" id="tabNew" onclick="switchTab('new')">New ticket</button>
+  <button class="tab secondary" id="tabMy" onclick="switchTab('my')">My tickets</button>
+</div>
+
+<!-- NEW TICKET -->
+<div id="viewNew">
+  <!-- FAQ -->
+  <div class="card" style="margin-bottom:20px">
+    <div class="section-title">Quick help</div>
+    <div class="search-bar"><input type="text" id="faqSearch" placeholder="Search help articles..." oninput="filterFaq(this.value)"></div>
+    <div class="faq-list" id="faqList">
+      <div class="faq-item" data-q="can't log in forgot password">
+        <button class="faq-q" onclick="toggleFaq(this)">Can't log in / forgot password <span>+</span></button>
+        <div class="faq-a">Use the "Forgot password" link on the login page. If you use an Account Key, generate a new one from your registered email.</div>
+      </div>
+      <div class="faq-item" data-q="2fa two factor authentication lost">
+        <button class="faq-q" onclick="toggleFaq(this)">Lost access to 2FA <span>+</span></button>
+        <div class="faq-a">If you have backup codes, use one to log in. Otherwise open a ticket with category "Account · login, password, 2FA" and we'll verify your identity.</div>
+      </div>
+      <div class="faq-item" data-q="encryption keys reset messages">
+        <button class="faq-q" onclick="toggleFaq(this)">Encryption keys were reset <span>+</span></button>
+        <div class="faq-a">After a key reset you need to log out and back in on all devices. Old messages cannot be decrypted — this is by design for security.</div>
+      </div>
+      <div class="faq-item" data-q="account banned suspended">
+        <button class="faq-q" onclick="toggleFaq(this)">Account banned or suspended <span>+</span></button>
+        <div class="faq-a">Open a ticket with category "Account · login, password, 2FA" and explain the situation. We review all ban appeals within 48 hours.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FORM -->
+  <div class="card" id="ticketForm">
+    <div class="section-title">Create ticket</div>
+    <div class="form-group">
+      <div class="form-label">Category</div>
+      <div class="category-grid" id="catGrid">
+        <button class="cat-option active" data-cat="Account · login, password, 2FA" onclick="selectCat(this)"><span class="cat-icon"></span>Account & Login</button>
+        <button class="cat-option" data-cat="Bug report" onclick="selectCat(this)"><span class="cat-icon"></span>Bug report</button>
+        <button class="cat-option" data-cat="Feature request" onclick="selectCat(this)"><span class="cat-icon"></span>Feature request</button>
+        <button class="cat-option" data-cat="Billing & payments" onclick="selectCat(this)"><span class="cat-icon"></span>Billing</button>
+        <button class="cat-option" data-cat="Security concern" onclick="selectCat(this)"><span class="cat-icon"></span>Security</button>
+        <button class="cat-option" data-cat="Other" onclick="selectCat(this)"><span class="cat-icon"></span>Other</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <div class="form-label">Priority</div>
+      <div class="priority-row">
+        <button class="prio-btn low active" onclick="selectPrio(this,'low')">Low</button>
+        <button class="prio-btn medium" onclick="selectPrio(this,'medium')">Medium</button>
+        <button class="prio-btn high" onclick="selectPrio(this,'high')">High</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <div class="form-label">Subject</div>
+      <input class="form-input" id="subjectInput" type="text" maxlength="200" placeholder="e.g. Can't log in after enabling 2FA" oninput="updateBar('subjectBar','subjectCount',this.value,200)">
+      <div class="char-bar-wrap"><div class="char-bar"><div class="char-fill" id="subjectBar" style="width:0%"></div></div><span class="char-count" id="subjectCount">0 / 200</span></div>
+    </div>
+    <div class="form-group">
+      <div class="form-label">Description</div>
+      <textarea class="form-textarea" id="descInput" maxlength="2000" placeholder="What happened?
+What did you expect?
+Steps to reproduce:
+1.
+2.
+3." oninput="updateBar('descBar','descCount',this.value,2000)"></textarea>
+      <div class="char-bar-wrap"><div class="char-bar"><div class="char-fill" id="descBar" style="width:0%"></div></div><span class="char-count" id="descCount">0 / 2000</span></div>
+    </div>
+    <div class="submit-row">
+      <button class="btn btn-primary" onclick="submitTicket()">Submit ticket</button>
+      <button class="btn btn-ghost" onclick="clearForm()">Clear</button>
+      <span class="rate-limit-note">To keep response times fast, you can create up to 3 new tickets per hour.</span>
+    </div>
+    <div style="margin-top:12px;font-size:13px;color:var(--muted)">Expected response time: <strong style="color:var(--text)">within 24 hours</strong></div>
+  </div>
+
+  <!-- DISCORD -->
+  <div class="card">
+    <div class="discord-card">
+      <div class="discord-icon"><svg viewBox="0 0 24 24"><path d="M18 4H8a5 5 0 0 0-5 5v4a5 5 0 0 0 5 5h1l1.5 2.5a.5.5 0 0 0 .8 0L13 18h5a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3z"/><circle cx="9" cy="11" r="1"/><circle cx="15" cy="11" r="1"/></svg></div>
+      <div class="discord-text">
+        <h3>Prefer Discord?</h3>
+        <p>Quick questions → Discord &nbsp;|&nbsp; Bugs & ongoing issues → Ticket</p>
+        <div class="discord-badges"><span class="badge green">Fast answers</span><span class="badge purple">Community</span></div>
+      </div>
+      <a href="https://discord.gg/828fwVgdU3" target="_blank" rel="noopener" class="btn btn-discord">Open Discord</a>
+    </div>
+  </div>
+
+  <!-- HOURS -->
+  <div class="card">
+    <div class="section-title" style="margin-bottom:8px">Support hours <span id="supportStatus" style="margin-left:8px"></span></div>
+    <div class="hours-grid">
+      <div class="hour-chip"><div class="hour-day">Mon – Thu</div><div class="hour-time">12:00 – 21:00</div></div>
+      <div class="hour-chip"><div class="hour-day">Friday</div><div class="hour-time">12:00 – 00:00</div></div>
+      <div class="hour-chip"><div class="hour-day">Saturday</div><div class="hour-time">14:30 – 00:00</div></div>
+      <div class="hour-chip"><div class="hour-day">Sunday</div><div class="hour-time">14:30 – 21:00</div></div>
+    </div>
+    <p style="margin-top:12px;font-size:13px;color:var(--muted)">Outside these hours: open a ticket and we'll respond as soon as possible.</p>
+  </div>
+</div>
+
+<!-- MY TICKETS -->
+<div id="viewMy" class="hidden">
+  <div class="card">
+    <div class="section-title">My tickets</div>
+    <div id="ticketList"><p style="color:var(--muted);font-size:14px">Loading...</p></div>
+  </div>
+</div>
+
+</main>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+// Stars
+document.addEventListener('DOMContentLoaded', function() {
+  var c = document.getElementById('rsStarCanvas');
+  for (var i = 0; i < 80; i++) {
+    var s = document.createElement('div');
+    s.className = 'rs-star-dot';
+    var sz = (Math.random()*1.6+0.4).toFixed(2);
+    var dur = (Math.random()*15+10).toFixed(1);
+    var delay = (Math.random()*-25).toFixed(1);
+    var op = (Math.random()*0.4+0.3).toFixed(2);
+    s.style.cssText = 'left:'+(Math.random()*100).toFixed(2)+'%;top:0;width:'+sz+'px;height:'+sz+'px;background:rgba(255,255,255,'+op+');animation-duration:'+dur+'s;animation-delay:'+delay+'s';
+    c.appendChild(s);
+  }
+  checkSupportStatus();
+  loadMyTickets();
+});
+
+var selectedCat = 'Account · login, password, 2FA';
+var selectedPrio = 'low';
+var me = null;
+
+fetch('/api/me',{credentials:'include'}).then(function(r){return r.ok?r.json():null}).then(function(d){me=d;if(!d){window.location.href='/login';}});
+
+function selectCat(el) {
+  document.querySelectorAll('.cat-option').forEach(function(b){b.classList.remove('active')});
+  el.classList.add('active');
+  selectedCat = el.dataset.cat;
+}
+function selectPrio(el, p) {
+  document.querySelectorAll('.prio-btn').forEach(function(b){b.classList.remove('active')});
+  el.classList.add('active');
+  selectedPrio = p;
+}
+function updateBar(barId, countId, val, max) {
+  var pct = Math.min(100, (val.length/max)*100);
+  document.getElementById(barId).style.width = pct + '%';
+  document.getElementById(countId).textContent = val.length + ' / ' + max;
+}
+function toggleFaq(btn) {
+  var item = btn.closest('.faq-item');
+  var isOpen = item.classList.contains('open');
+  document.querySelectorAll('.faq-item').forEach(function(i){i.classList.remove('open');i.querySelector('.faq-q span').textContent='+'});
+  if (!isOpen) { item.classList.add('open'); btn.querySelector('span').textContent='−'; }
+}
+function filterFaq(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('.faq-item').forEach(function(item){
+    item.style.display = (!q || item.dataset.q.includes(q)) ? '' : 'none';
+  });
+}
+function switchTab(t) {
+  document.getElementById('viewNew').classList.toggle('hidden', t!=='new');
+  document.getElementById('viewMy').classList.toggle('hidden', t!=='my');
+  document.getElementById('tabNew').classList.toggle('active', t==='new');
+  document.getElementById('tabMy').classList.toggle('active', t==='my');
+  document.getElementById('tabNew').classList.toggle('secondary', t!=='new');
+  document.getElementById('tabMy').classList.toggle('secondary', t==='new');
+  if (t==='my') loadMyTickets();
+}
+function showToast(msg, type) {
+  var t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type||'success');
+  setTimeout(function(){ t.classList.remove('show'); }, 4000);
+}
+function clearForm() {
+  document.getElementById('subjectInput').value='';
+  document.getElementById('descInput').value='';
+  updateBar('subjectBar','subjectCount','',200);
+  updateBar('descBar','descCount','',2000);
+}
+async function submitTicket() {
+  var s = document.getElementById('subjectInput').value.trim();
+  var d = document.getElementById('descInput').value.trim();
+  if (!s) { showToast('Please enter a subject.', 'error'); return; }
+  if (!d) { showToast('Please enter a description.', 'error'); return; }
+  if (!me) { showToast('You must be logged in to submit a ticket.', 'error'); return; }
+  try {
+    var r = await fetch('/api/support/ticket', {
+      method: 'POST', credentials: 'include',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username: me.username, category: selectedCat, subject: s, description: d, priority: selectedPrio})
+    });
+    if (r.ok) {
+      var data = await r.json().catch(function(){return{}});
+      showToast('✅ Ticket submitted! We will get back to you within 24h.', 'success');
+      clearForm();
+      if (data.id) showToast('Ticket #'+data.id+' created.', 'success');
+    } else {
+      var err = await r.json().catch(function(){return{}});
+      showToast(err.error || 'Could not submit ticket.', 'error');
+    }
+  } catch(e) { showToast('Network error.', 'error'); }
+}
+function loadMyTickets() {
+  var el = document.getElementById('ticketList');
+  if (!el) return;
+  fetch('/api/support/my-tickets', {credentials:'include'})
+    .then(function(r){return r.ok?r.json():[]})
+    .then(function(data){
+      if (!data || !data.length) { el.innerHTML='<p style="color:var(--muted);font-size:14px">No tickets yet.</p>'; return; }
+      el.innerHTML = '<div class="ticket-list">' + data.map(function(t){
+        var sc = t.status==='resolved'?'resolved':t.status==='pending'?'pending':'open';
+        return '<div class="ticket-item"><span class="ticket-status '+sc+'">'+t.status+'</span><div class="ticket-info"><div class="ticket-subject">'+esc(t.subject)+'</div><div class="ticket-meta">#'+t.id+' · '+t.category+' · '+fmtDate(t.createdAt)+'</div></div></div>';
+      }).join('')+'</div>';
+    })
+    .catch(function(){ el.innerHTML='<p style="color:var(--muted)">Could not load tickets.</p>'; });
+}
+function checkSupportStatus() {
+  var now = new Date();
+  var day = now.getDay(); // 0=Sun,1=Mon,...,6=Sat
+  var h = now.getHours() + now.getMinutes()/60;
+  var open = false;
+  if (day>=1 && day<=4 && h>=12 && h<21) open=true;
+  else if (day===5 && h>=12) open=true;
+  else if (day===6 && h>=14.5) open=true;
+  else if (day===0 && h>=14.5 && h<21) open=true;
+  var el = document.getElementById('supportStatus');
+  if (el) el.innerHTML = open
+    ? '<span class="status-chip online"><span class="status-dot-sm"></span>Online</span>'
+    : '<span class="status-chip offline"><span class="status-dot-sm"></span>Closed</span>';
+}
+function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function fmtDate(v){if(!v)return'—';var d=new Date(v);return isNaN(d)?v:d.toLocaleDateString('en-GB',{year:'numeric',month:'short',day:'numeric'})}
+</script>
+</body></html>

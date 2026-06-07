@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script src="../theme.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0a0f1a">
+<title>RunSpace — offline</title>
+<link rel="manifest" href="/manifest.webmanifest">
+</head>
+<body>
+  <div class="box">
+    <div class="logo">R</div>
+    <h1><span class="dot"></span>Offline</h1>
+    <p>You don't appear to have a connection right now. RunSpace needs internet to sync messages.</p>
+    <button onclick="location.reload()">Try again</button>
+    <p class="mono" style="margin-top: 20px;">runspace.cloud</p>
+  </div>
+  <script>
+    window.addEventListener('online', () => location.reload());
+  </script>
+</body>
+</html>

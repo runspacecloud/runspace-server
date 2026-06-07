@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script src="../theme.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Donera krypto | RunSpace</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+
+</head>
+<body>
+
+  <nav class="nav">
+    <div class="brand" onclick="location.href='/'">RUNSPACE</div>
+    <button class="btn-outline" onclick="location.href='/'">Tillbaka</button>
+  </nav>
+
+  <div class="wrap">
+    <h1>Donera med krypto</h1>
+    <div class="muted">
+      Om du vill stötta RunSpace kan du skicka valfri summa till adresserna nedan.
+      Dubbelkolla alltid <b>nätverk</b> innan du skickar. Transaktioner går inte att ångra.
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+          <div>
+            <div style="font-weight:800;font-size:1.1rem">Adresser</div>
+            <div class="muted" style="margin-top:6px">Tryck “Kopiera” och klistra in i din wallet.</div>
+          </div>
+          <div id="copied" class="ok">Kopierat ✅</div>
+        </div>
+
+        <div class="warn">
+          Varning: Skicka bara på rätt nätverk. Exempel: <b>USDT</b> finns på flera nätverk (ERC20/TRC20/…).
+          Om du skickar på fel nätverk kan pengarna försvinna.
+        </div>
+
+        <div class="list" id="coinList"></div>
+      </div>
+
+      <div class="card">
+        <div style="font-weight:800;font-size:1.1rem;margin-bottom:6px">QR-kod</div>
+        <div class="muted">Välj coin så genereras en QR av adressen (offline i browsern).</div>
+
+        <label for="coinSelect">Coin</label>
+        <select id="coinSelect"></select>
+
+        <label for="amount">Belopp (valfritt)</label>
+        <input id="amount" placeholder="t.ex. 10" inputmode="decimal" />
+
+        <div class="qrWrap" style="margin-top:14px">
+          <div class="qrBox">
+            <img id="qrImg" alt="QR" />
+          </div>
+          <button class="btn" id="copyBtn">Kopiera adress</button>
+          <div class="muted" id="qrAddr" style="text-align:center;max-width:320px;word-break:break-all"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ===========================
+  // Fyll i dina adresser här
+  // ===========================
+  const COINS = [
+    { key: "BTC",  name: "Bitcoin",  network: "BTC",  address: "329rGJDSsUVCpQMghP49c3g2mjFjs5P44Hz" },
+    { key: "ETH",  name: "Ethereum", network: "ERC20",address: "0x00C2420c583d44fF2A64cb29Bd6A6c222b3fc264" },
+    { key: "SOL",  name: "Solana",   network: "SOL",  address: "FGEQse4BW6KfaLFi6NEWhsXJVxWnPE3zvFrRDMFs8wd1" },
+    { key: "LTC",  name: "Litecoin", network: "LTC",  address: "MA61AE3W8QxrkCioyreiXErwueemRDeSgU" },
+  ];
+
+  const $ = (id) => document.getElementById(id);
+
+  function showCopied() {
+    const el = $("copied");
+    el.style.display = "inline-block";
+    clearTimeout(showCopied._t);
+    showCopied._t = setTimeout(() => (el.style.display = "none"), 1200);
+  }
+
+  async function copyText(text) {
+    await navigator.clipboard.writeText(text);
+    showCopied();
+  }
+
+  function shorten(s) {
+    if (!s) return "";
+    if (s.length <= 18) return s;
+    return s.slice(0, 8) + "…" + s.slice(-8);
+  }
+
+  function renderList() {
+    const list = $("coinList");
+    list.innerHTML = "";
+
+    COINS.forEach(c => {
+      const row = document.createElement("div");
+      row.className = "row";
+
+      const left = document.createElement("div");
+      left.className = "left";
+      left.innerHTML = `
+        <div class="coin">${c.key} <span class="net">(${c.network})</span></div>
+        <div class="addr" title="${c.address}">${shorten(c.address)}</div>
+      `;
+
+      const actions = document.createElement("div");
+      actions.className = "actions";
+
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "small-btn";
+      copyBtn.textContent = "Kopiera";
+      copyBtn.onclick = () => copyText(c.address);
+
+      const qrBtn = document.createElement("button");
+      qrBtn.className = "small-btn";
+      qrBtn.textContent = "QR";
+      qrBtn.onclick = () => {
+        $("coinSelect").value = c.key;
+        updateQr();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      };
+
+      actions.appendChild(copyBtn);
+      actions.appendChild(qrBtn);
+
+      row.appendChild(left);
+      row.appendChild(actions);
+      list.appendChild(row);
+    });
+  }
+
+  function renderSelect() {
+    const sel = $("coinSelect");
+    sel.innerHTML = "";
+    COINS.forEach((c, i) => {
+      const opt = document.createElement("option");
+      opt.value = c.key;
+      opt.textContent = `${c.key} (${c.network})`;
+      if (i === 0) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  function getSelectedCoin() {
+    const key = $("coinSelect").value;
+    return COINS.find(x => x.key === key) || COINS[0];
+  }
+
+  // Enkel QR utan externa libs: använd en QR image-service.
+  // OBS: Detta läcker adressen till tjänsten. Om du vill vara 100% offline:
+  // säg till så ger jag dig en inbyggd QR-lib (minifierad) som funkar utan nät.
+  function makeQrUrl(text) {
+    const data = encodeURIComponent(text);
+    return `https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${data}`;
+  }
+
+  function updateQr() {
+    const c = getSelectedCoin();
+    const amount = ($("amount").value || "").trim();
+
+    // QR-text: bara adress (säkert). Vill du ha “bitcoin:addr?amount=..” kan vi lägga.
+    let qrText = c.address;
+
+    $("qrImg").src = makeQrUrl(qrText);
+    $("qrAddr").textContent = `${c.key} (${c.network})\n${c.address}`;
+
+    $("copyBtn").onclick = () => copyText(c.address);
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    // Basic sanity: ta bort coins som inte är ifyllda
+    const filtered = COINS.filter(c => c.address && c.address !== "PASTE_ADDRESS_HERE");
+    if (filtered.length > 0) {
+      while (COINS.length) COINS.pop();
+      filtered.forEach(x => COINS.push(x));
+    }
+
+    renderList();
+    renderSelect();
+    updateQr();
+
+    $("coinSelect").addEventListener("change", updateQr);
+    $("amount").addEventListener("input", () => {
+      // just nu påverkar inte amount QR-texten, men vi lämnar hooken
+    });
+  });
+</script>
+
+  <script src="/terminal.js"></script>
+</body>
+</html>

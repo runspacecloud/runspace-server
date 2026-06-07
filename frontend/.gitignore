@@ -1,0 +1,5 @@
+uploads/
+*.bak
+*.backup*
+*.log
+photorec.se2

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script src="../theme.js"></script><script>
+(function(){
+  var themes = {
+    dark:     {'--bg':'#080812','--bg-2':'#0d0d1a','--bg-3':'#111125','--bg-4':'#161630','--text':'#e8e8f0','--text-2':'#8888a8','--text-3':'#55556a','--surface':'#0b0b14','--surface-2':'#0f0f1a','--surface-3':'#131320','--border':'rgba(255,255,255,.06)','--border-hover':'rgba(255,255,255,.11)','--muted':'#4e617a','--dim':'#7a90a8'},
+    midnight: {'--bg':'#050510','--bg-2':'#08080f','--bg-3':'#0c0c18','--bg-4':'#101020','--text':'#c8c8e8','--text-2':'#6666aa','--text-3':'#444466','--surface':'#080810','--surface-2':'#0c0c16','--surface-3':'#10101c','--border':'rgba(255,255,255,.05)','--border-hover':'rgba(255,255,255,.09)','--muted':'#444466','--dim':'#6666aa'},
+    oled:     {'--bg':'#000000','--bg-2':'#050505','--bg-3':'#0a0a0a','--bg-4':'#0f0f0f','--text':'#ffffff','--text-2':'#888888','--text-3':'#444444','--surface':'#050505','--surface-2':'#080808','--surface-3':'#0c0c0c','--border':'rgba(255,255,255,.08)','--border-hover':'rgba(255,255,255,.14)','--muted':'#555555','--dim':'#888888'},
+    light:    {'--bg':'#f4f4f8','--bg-2':'#ebebf0','--bg-3':'#e0e0ea','--bg-4':'#d5d5e0','--text':'#111120','--text-2':'#555566','--text-3':'#999aaa','--surface':'#ffffff','--surface-2':'#f0f0f5','--surface-3':'#e8e8f0','--border':'rgba(0,0,0,.08)','--border-hover':'rgba(0,0,0,.14)','--muted':'#777788','--dim':'#555566'}
+  };
+  var t = localStorage.getItem('rs_theme');
+  var vars = themes[t] || themes.dark;
+  Object.keys(vars).forEach(function(k){ document.documentElement.style.setProperty(k, vars[k]); });
+})();
+</script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Profile — RunSpace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="rs-star-canvas" id="stars"></div><script>document.addEventListener("DOMContentLoaded",function(){var c=document.getElementById("stars");if(!c)return;for(var i=0;i<150;i++){var s=document.createElement("div");s.className="rs-star-dot";var sz=(Math.random()*1.8+0.4).toFixed(2);var dur=(Math.random()*12+8).toFixed(1);var delay=(Math.random()*-20).toFixed(1);var op=(Math.random()*0.5+0.4).toFixed(2);s.style.cssText="left:"+(Math.random()*100).toFixed(2)+"%;top:0;width:"+sz+"px;height:"+sz+"px;background:rgba(255,255,255,"+op+");animation-duration:"+dur+"s;animation-delay:"+delay+"s";c.appendChild(s);}});</script>
+
+<div class="shell">
+
+  <!-- Sidebar -->
+  <aside class="side">
+    <a href="/" class="side-logo">
+      <div class="side-logo-mark">R</div>
+      RunSpace
+    </a>
+
+    <div class="side-group-label">Platform</div>
+
+    <a href="/" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Home
+    </a>
+    <a href="/about" class="side-item">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      About
+    </a>
+    <a href="/download" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Download
+    </a>
+    <a href="/news" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6z"/></svg>
+      News
+    </a>
+
+    <div class="side-group-label">Legal</div>
+
+    <a href="/tos" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Terms
+    </a>
+    <a href="/privacy" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Privacy
+    </a>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- Loading state -->
+    <div class="profile-wrap" id="profile-loading">
+      <div class="banner-skel skel"></div>
+      <div class="profile-content">
+        <div class="avatar-skel skel"></div>
+        <div class="info-skel">
+          <div class="skel" style="width:160px;height:22px;border-radius:6px"></div>
+          <div class="skel" style="width:100px;height:14px;border-radius:6px;margin-top:8px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Profile (hidden until loaded) -->
+    <div class="profile-wrap hidden" id="profile-main">
+
+      <!-- Banner -->
+      <div class="banner" id="profile-banner"></div>
+
+      <div class="profile-content">
+        <!-- Avatar -->
+        <div class="avatar-wrap">
+          <div class="avatar" id="profile-avatar"></div>
+          <div class="status-dot" id="profile-status-dot"></div>
+        </div>
+
+        <!-- Info -->
+        <div class="profile-info">
+          <div class="profile-name-row">
+            <h1 id="profile-username"></h1>
+            <span class="premium-badge hidden" id="profile-premium">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              Premium
+            </span>
+          </div>
+          <div class="profile-meta" id="profile-meta"></div>
+          <div class="badges-row hidden" id="profile-badges"></div>
+        </div>
+
+        <!-- Actions (shown when logged in) -->
+        <div class="profile-actions hidden" id="profile-actions">
+          <a href="/profile/settings" class="action-btn secondary" id="btn-settings" style="display:none">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            Settings
+          </a>
+          <a href="#" class="action-btn primary" id="btn-message">
+            <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Message
+          </a>
+        </div>
+      </div>
+
+      <!-- Suspended notice -->
+      <div class="suspended-notice hidden" id="suspended-notice">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+        This account has been suspended.
+      </div>
+
+      <!-- Bio -->
+      <div class="profile-body">
+        <div class="bio-section hidden" id="bio-section">
+          <div class="section-label">About</div>
+          <p class="bio-text" id="profile-bio"></p>
+        </div>
+
+        <!-- Links -->
+        <div class="links-section hidden" id="links-section">
+          <div class="section-label">Links</div>
+          <div class="links-list" id="profile-links"></div>
+        </div>
+
+        <!-- Stats (public info) -->
+        <div class="stats-section">
+          <div class="section-label">Info</div>
+          <div class="stats-grid">
+            <div class="stat-item">
+              <span class="stat-label">Member since</span>
+              <span class="stat-value" id="stat-age"></span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Status</span>
+              <span class="stat-value" id="stat-status"></span>
+            </div>
+            <div class="stat-item hidden" id="stat-plan-wrap">
+              <span class="stat-label">Plan</span>
+              <span class="stat-value" id="stat-plan"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Not found -->
+    <div class="profile-wrap hidden" id="profile-notfound">
+      <div class="notfound">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <h2>User not found</h2>
+        <p>This profile doesn't exist or has been removed.</p>
+        <a href="/">Back to home</a>
+      </div>
+    </div>
+
+    <footer class="site-footer">
+      <p>RunSpace &copy; 2026</p>
+      <div class="footer-links">
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/tos">Terms</a>
+        <a href="/chatt">Open Chat</a>
+      </div>
+    </footer>
+  </div>
+
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script src="../theme.js"></script>
+<link rel="stylesheet" href="style.css"/>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Unlock key -- RunSpace</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+</head>
+<body>
+<div id="rsStarCanvas" class="rs-star-canvas" aria-hidden="true"></div>
+<script>
+(function(){
+  var c=document.getElementById('rsStarCanvas');
+  if(!c)return;
+  for(var i=0;i<150;i++){
+    var s=document.createElement('div');
+    s.className='rs-star-dot';
+    var sz=(Math.random()*1.8+0.4).toFixed(2);
+    var dur=(Math.random()*12+8).toFixed(1);
+    var delay=(Math.random()*-20).toFixed(1);
+    var op=(Math.random()*0.5+0.4).toFixed(2);
+    s.style.cssText='left:'+(Math.random()*100).toFixed(2)+'%;top:0;width:'+sz+'px;height:'+sz+'px;background:rgba(255,255,255,'+op+');animation-duration:'+dur+'s;animation-delay:'+delay+'s';
+    c.appendChild(s);
+  }
+})();
+</script>
+<div class="bg"><div class="bg-orb orb1"></div><div class="bg-orb orb2"></div></div>
+<div class="page">
+<div class="card">
+  <div class="card-head">
+    <div class="logo-row">
+      <div class="logo-mark"><svg viewBox="0 0 16 16"><path d="M8 1L2 4v4c0 3.3 2.6 6.4 6 7.1C11.4 14.4 14 11.3 14 8V4L8 1z"/></svg></div>
+      <span class="logo-name">RunSpace</span>
+      <a href="/" class="logo-back">back</a>
+    </div>
+    <div class="head-title">Unlock key file</div>
+    <div class="head-sub">View your account key -- nothing is sent to the server</div>
+  </div>
+  <div class="card-body">
+    <div class="notice">
+      <span class="notice-icon">i</span>
+      <span class="notice-text">Decryption happens entirely in your browser. Your key and passphrase never leave your device.</span>
+    </div>
+    <div class="alert ae" id="al-err"><span class="alert-icon">&#8856;</span><div><div class="alert-title" id="al-err-t">Error</div><div class="alert-sub" id="al-err-s"></div></div></div>
+    <div class="alert ag" id="al-ok"><span class="alert-icon">&#10003;</span><div><div class="alert-title">Success</div><div class="alert-sub">Key decrypted successfully.</div></div></div>
+    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+      <div class="drop-icon">&#128274;</div>
+      <div class="drop-text">Click or drag your <strong>runspace.key</strong> file here</div>
+      <div class="drop-filename" id="drop-filename"></div>
+    </div>
+    <input type="file" id="file-input" accept=".key" style="display:none" onchange="onFileSelected(this)"/>
+    <div class="field">
+      <label class="flabel">Passphrase</label>
+      <div class="fwrap">
+        <input class="finput has-icon" type="password" id="fpp" placeholder="enter your passphrase" onkeydown="if(event.key==='Enter')handleUnlock()"/>
+        <button class="eye-btn" type="button" id="eye-pp" onclick="toggleEye()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </div>
+    <button class="btn" id="unlockbtn" onclick="handleUnlock()"><span id="unlockbln">Unlock</span></button>
+    <div class="result-box" id="result-box">
+      <div class="result-label">Your account key</div>
+      <div class="result-key" id="result-key" onclick="copyKey()" title="Click to copy"></div>
+      <div class="copy-hint">click to copy</div>
+    </div>
+  </div>
+</div>
+</div>
+<script>
+var selectedFile = null;
+var eyeOpen = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+var eyeClosed = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+function toggleEye(){var inp=document.getElementById('fpp'),btn=document.getElementById('eye-pp');var h=inp.type==='password';inp.type=h?'text':'password';btn.innerHTML=h?eyeClosed:eyeOpen;}
+function onDragOver(e){e.preventDefault();document.getElementById('drop-zone').classList.add('over');}
+function onDragLeave(e){document.getElementById('drop-zone').classList.remove('over');}
+function onDrop(e){e.preventDefault();var dz=document.getElementById('drop-zone');dz.classList.remove('over');var file=e.dataTransfer.files[0];if(file)setFile(file);}
+function onFileSelected(inp){if(inp.files[0])setFile(inp.files[0]);}
+function setFile(file){selectedFile=file;var dz=document.getElementById('drop-zone');dz.classList.add('has-file');document.getElementById('drop-filename').textContent=file.name;clearAlerts();document.getElementById('result-box').classList.remove('show');}
+function clearAlerts(){document.getElementById('al-err').classList.remove('show');document.getElementById('al-ok').classList.remove('show');}
+function showErr(t,s){clearAlerts();document.getElementById('al-err-t').textContent=t||'Error';document.getElementById('al-err-s').textContent=s||'';document.getElementById('al-err').classList.add('show');}
+function setBtn(state,text){var b=document.getElementById('unlockbtn');b.disabled=false;if(state==='loading'){b.disabled=true;b.innerHTML='<div class="spin"></div><span>Decrypting...</span>';}else{b.innerHTML='<span id="unlockbln">'+text+'</span>';}}
+async function handleUnlock(){
+  if(!selectedFile){showErr('No file selected','Drag or click to select your runspace.key file.');return;}
+  var pp=document.getElementById('fpp').value;
+  if(!pp){showErr('Passphrase required','Enter the passphrase you used when downloading the key file.');return;}
+  clearAlerts();setBtn('loading','');
+  try{
+    var key=await decryptKey(selectedFile,pp);
+    document.getElementById('result-key').textContent=key;
+    document.getElementById('result-box').classList.add('show');
+    document.getElementById('al-ok').classList.add('show');
+    setBtn('normal','Unlock');
+  }catch(e){setBtn('normal','Unlock');showErr('Decryption failed','Wrong passphrase or corrupted file.');}
+}
+async function decryptKey(file,passphrase){
+  var buf=await file.arrayBuffer();
+  var data=new Uint8Array(buf);
+  if(data[0]!==0x52||data[1]!==0x53||data[2]!==0x4B||data[3]!==0x31)throw new Error('Invalid key file format.');
+  var salt=data.slice(4,20);
+  var iv=data.slice(20,32);
+  var ciphertext=data.slice(32);
+  var enc=new TextEncoder();
+  var baseKey=await crypto.subtle.importKey('raw',enc.encode(passphrase),{name:'PBKDF2'},false,['deriveKey']);
+  var aesKey=await crypto.subtle.deriveKey({name:'PBKDF2',salt:salt,iterations:100000,hash:'SHA-256'},baseKey,{name:'AES-GCM',length:256},false,['decrypt']);
+  var plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:iv},aesKey,ciphertext);
+  return new TextDecoder().decode(plain);
+}
+function copyKey(){
+  var key=document.getElementById('result-key').textContent;
+  navigator.clipboard.writeText(key).then(function(){
+    var hint=document.querySelector('.copy-hint');
+    hint.textContent='copied!';hint.style.color='var(--green)';
+    setTimeout(function(){hint.textContent='click to copy';hint.style.color='';},2000);
+  });
+}
+</script>
+</body>
+</html>

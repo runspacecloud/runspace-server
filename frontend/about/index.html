@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script src="../theme.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>About — RunSpace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div class="rs-star-canvas" id="stars"></div>
+
+<div class="shell">
+
+  <!-- Sidebar -->
+  <aside class="side">
+    <a href="/" class="side-logo">
+      <div class="side-logo-mark">R</div>
+      RunSpace
+    </a>
+
+    <div class="side-group-label">Platform</div>
+
+    <a href="/" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Home
+    </a>
+    <a href="/about" class="side-item active">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      About
+    </a>
+    <a href="/download" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Download
+    </a>
+    <a href="/news" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6z"/></svg>
+      News
+    </a>
+
+    <div class="side-group-label">Legal</div>
+
+    <a href="/tos" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Terms
+    </a>
+    <a href="/privacy" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Privacy
+    </a>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="wrap">
+
+      <!-- Hero -->
+      <div class="hero fu d1">
+        <p class="hero-kicker">About RunSpace</p>
+        <h1>Communication tools<br>shouldn't cost you<br><em>your privacy.</em></h1>
+        <div class="hero-body">
+          <p>Most platforms trade convenience for data. They track what you say, who you talk to, and how often. RunSpace was built on the premise that this is the wrong tradeoff.</p>
+          <p>Private communication shouldn't require trust in a corporation. It should be guaranteed by the architecture itself.</p>
+        </div>
+      </div>
+
+      <!-- Statement -->
+      <div class="statement fu d2">
+        <div class="stmt-item">
+          <div class="stmt-icon">
+            <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <h3>Privacy by design</h3>
+          <p>End-to-end encryption on all direct messages. RSA-OAEP + AES-256-GCM. Keys stay on your device.</p>
+        </div>
+        <div class="stmt-item">
+          <div class="stmt-icon">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20M12 2a14.5 14.5 0 0 1 0 20M2 12h20"/></svg>
+          </div>
+          <h3>Hosted in Europe</h3>
+          <p>Running on Hetzner infrastructure in Germany. No US jurisdiction. No data sold to third parties.</p>
+        </div>
+        <div class="stmt-item">
+          <div class="stmt-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3>Minimal data collection</h3>
+          <p>No email required. No tracking pixels. Account keys are UUID v4 — no identity tied to your account.</p>
+        </div>
+        <div class="stmt-item">
+          <div class="stmt-icon">
+            <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          </div>
+          <h3>Security by design</h3>
+          <p>Rate limiting, behavioral trust scoring, hCaptcha on registration, and CSP headers throughout.</p>
+        </div>
+      </div>
+
+      <!-- Origin -->
+      <div class="origin fu d3">
+        <div class="section-label">Origin</div>
+        <div class="origin-text">
+          <p>RunSpace started on <strong>December 24, 2025</strong> — a single-person project with no roadmap, no funding, and no particular plan. Just a question: how far can this actually go?</p>
+          <p>It's <strong>independently built and actively developed</strong>. No investors, no advertising model, no growth-at-all-costs thinking. The only metric that matters is whether the platform is trustworthy enough to actually use.</p>
+          <p>The goal isn't to replace every chat app. It's to offer a credible alternative for people who think carefully about where their data lives — and who's reading it.</p>
+        </div>
+      </div>
+
+      <div class="divider fu d3"></div>
+
+      <!-- Facts -->
+      <div class="fu d4">
+        <div class="section-label">What this means in practice</div>
+        <div class="facts">
+          <div class="fact">
+            <div class="fact-check"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="fact-text"><strong>Not backed by advertising.</strong> There is no business model that depends on knowing who you talk to.</div>
+          </div>
+          <div class="fact">
+            <div class="fact-check"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="fact-text"><strong>No required personal data.</strong> Sign up with a UUID key. No email, no phone number, no name.</div>
+          </div>
+          <div class="fact">
+            <div class="fact-check"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="fact-text"><strong>Encryption you can verify.</strong> RSA-OAEP 2048-bit + AES-256-GCM. Keys are generated client-side and never leave your device.</div>
+          </div>
+          <div class="fact">
+            <div class="fact-check"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="fact-text"><strong>Open protocol in progress.</strong> The goal is a published spec and open client code so you don't have to trust us — you can read it.</div>
+          </div>
+          <div class="fact">
+            <div class="fact-check"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="fact-text"><strong>Actively maintained.</strong> One developer, consistent commits, long-term focus. Not a project that gets abandoned in six months.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <footer class="site-footer">
+      <p>RunSpace &copy; 2026</p>
+      <div class="footer-links">
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/tos">Terms</a>
+        <a href="/chatt">Open Chat</a>
+      </div>
+    </footer>
+  </div>
+
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>

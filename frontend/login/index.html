@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script src="../theme.js"></script>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0a0f1a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="RunSpace">
+    <link rel="apple-touch-icon" href="/icons/icon-180.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Sign in — RunSpace</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Syne:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#07070d;--s1:#0e0e18;--s2:#13131e;--s3:#1a1a28;--s4:#222234;
+  --border:#ffffff0c;--border2:#ffffff18;--border3:#ffffff28;
+  --text:#dde0f0;--muted:#4e5068;--muted2:#787b99;
+  --accent:#5b4fcf;--accent-h:#7066e0;--accent-glow:rgba(91,79,207,.16);
+  --green:#0db57a;--green-dim:rgba(13,181,122,.1);--green-b:rgba(13,181,122,.25);
+  --yellow:#e8a838;--yellow-dim:rgba(232,168,56,.09);--yellow-b:rgba(232,168,56,.28);
+  --red:#c94040;--red-dim:rgba(201,64,64,.08);--red-b:rgba(201,64,64,.28);
+  --mono:'IBM Plex Mono',monospace;--sans:'Syne',sans-serif;
+}
+html,body{height:100%;background:var(--bg);font-family:var(--sans);color:var(--text);overflow-x:hidden}
+
+.bg{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+
+.bg-orb{position:absolute;border-radius:50%;filter:blur(100px)}
+
+
+
+.page{position:relative;z-index:1;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2rem 1rem}
+
+.card{width:100%;max-width:408px;background:rgba(13,13,22,.94);border:0.5px solid var(--border2);border-radius:20px;overflow:hidden;backdrop-filter:blur(24px);animation:card-in .4s cubic-bezier(.4,0,.2,1)}
+@keyframes card-in{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+
+.card-head{padding:26px 28px 22px;border-bottom:0.5px solid var(--border)}
+.logo-row{display:flex;align-items:center;gap:10px;margin-bottom:22px}
+.logo-mark{width:30px;height:30px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.logo-mark svg{width:14px;height:14px;fill:white}
+.logo-name{font-size:14px;font-weight:700;letter-spacing:-.3px}
+.logo-back{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--muted2);text-decoration:none;opacity:.7}
+.logo-back:hover{opacity:1;color:var(--text)}
+.head-title{font-size:21px;font-weight:700;letter-spacing:-.4px;margin-bottom:5px;transition:all .3s}
+.head-sub{font-size:12px;color:var(--muted2);transition:all .3s}
+
+.card-body{padding:22px 28px 26px}
+
+/* Session bar */
+.sbar{display:flex;align-items:center;gap:9px;padding:9px 12px;background:var(--s2);border:0.5px solid var(--border);border-radius:9px;margin-bottom:16px;min-height:36px;transition:background .5s,border-color .5s}
+.sbar.ok{background:var(--green-dim);border-color:var(--green-b)}
+.sbar.bad{background:var(--red-dim);border-color:var(--red-b)}
+.sbar.warn{background:var(--yellow-dim);border-color:var(--yellow-b)}
+.sdot{width:6px;height:6px;border-radius:50%;flex-shrink:0;background:var(--muted2);transition:background .4s}
+.sdot.pulse{animation:dp 1.8s ease-in-out infinite}
+@keyframes dp{0%,100%{opacity:1}50%{opacity:.35}}
+.shimmer-wrap{flex:1;height:9px;background:var(--s3);border-radius:3px;overflow:hidden}
+.shimmer-bar{height:100%;width:55%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.07),transparent);animation:shimmer 1.6s ease-in-out infinite;border-radius:3px}
+@keyframes shimmer{from{transform:translateX(-150%)}to{transform:translateX(250%)}}
+.slabel{font-family:var(--mono);font-size:10px;flex:1;display:none;transition:color .3s;opacity:0;transition:opacity .2s}
+.slabel.show{display:block;opacity:1}
+.sbadge{font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:4px;border:0.5px solid;white-space:nowrap;display:none}
+
+/* Trust indicators */
+.ti-row{display:flex;gap:6px;margin-bottom:16px}
+.ti{display:flex;align-items:center;gap:5px;padding:5px 9px;background:var(--s2);border:0.5px solid var(--border);border-radius:6px;font-family:var(--mono);font-size:9px;color:var(--muted2);transition:all .4s}
+.ti.lit{background:var(--green-dim);border-color:var(--green-b);color:var(--green)}
+.ti-d{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0}
+
+/* Device badge */
+.devbadge{display:none;align-items:center;gap:8px;padding:9px 12px;background:var(--green-dim);border:0.5px solid var(--green-b);border-radius:9px;margin-bottom:14px;animation:ai .25s ease}
+.devbadge.show{display:flex}
+.devpulse{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0;animation:dp 2s ease-in-out infinite}
+.devtext{font-size:12px;color:var(--green);flex:1}
+
+/* Alerts */
+.alert{border-radius:10px;padding:10px 13px;margin-bottom:16px;display:none;align-items:flex-start;gap:9px;border:0.5px solid;font-size:12px;line-height:1.55;animation:ai .25s ease}
+@keyframes ai{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+.alert.show{display:flex}
+.alert-icon{font-size:14px;flex-shrink:0;line-height:1.2}
+.alert-title{font-weight:600;margin-bottom:2px}
+.alert-body .alert-sub{opacity:.7}
+.ae{background:var(--red-dim);border-color:var(--red-b);color:var(--red)}
+.aw{background:var(--yellow-dim);border-color:var(--yellow-b);color:var(--yellow)}
+.ag{background:var(--green-dim);border-color:var(--green-b);color:var(--green)}
+
+/* Panels */
+.panel{display:none}
+.panel.active{display:block;animation:pi .3s ease}
+@keyframes pi{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:translateX(0)}}
+
+/* Fields */
+.field{margin-bottom:14px}
+.ftop{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.flabel{font-size:11px;font-weight:600;color:var(--muted2);letter-spacing:.25px;text-transform:uppercase}
+.flink{font-family:var(--mono);font-size:10px;color:var(--muted2);text-decoration:none;opacity:.7}
+.flink:hover{opacity:1;color:var(--accent-h)}
+.fwrap{position:relative}
+.finput{width:100%;background:var(--s2);border:0.5px solid var(--border2);border-radius:10px;padding:11px 14px;font-size:14px;font-family:var(--sans);color:var(--text);outline:none;transition:border .2s,box-shadow .2s}
+.finput:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.finput::placeholder{color:var(--muted)}
+.finput.has-icon{padding-right:46px}
+.finput.ferr{border-color:var(--red)!important;box-shadow:0 0 0 3px rgba(201,64,64,.1)!important}
+.finput.fok{border-color:rgba(13,181,122,.4)!important}
+.eye-btn{position:absolute;right:0;top:0;bottom:0;width:44px;display:flex;align-items:center;justify-content:center;background:none;border:none;cursor:pointer;color:var(--muted2);transition:color .15s}
+.eye-btn:hover{color:var(--text)}
+.eye-btn svg{width:16px;height:16px}
+.fmsg{font-size:11px;margin-top:5px;font-family:var(--mono);display:none}
+.fmsg.show{display:block}
+.fmsg.err{color:var(--red)}
+.fmsg.ok{color:var(--green)}
+
+/* OTP */
+.otp-desc{font-size:12px;color:var(--muted2);line-height:1.65;margin-bottom:14px}
+.otp-em{color:var(--text);font-weight:600}
+.digits{display:flex;gap:8px;margin-bottom:10px}
+.dg{flex:1;height:52px;background:var(--s2);border:0.5px solid var(--border2);border-radius:10px;text-align:center;font-family:var(--mono);font-size:22px;color:var(--text);outline:none;caret-color:transparent;transition:border .2s,box-shadow .2s}
+.dg:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.dg.filled{border-color:rgba(91,79,207,.45);background:rgba(91,79,207,.05)}
+.dg.shake{animation:sk .35s ease}
+@keyframes sk{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+.otp-foot{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+.otp-timer{font-family:var(--mono);font-size:11px;color:var(--muted2)}
+.resend-btn{background:none;border:none;font-family:var(--mono);font-size:11px;color:var(--accent-h);cursor:pointer;padding:0}
+.resend-btn:hover{text-decoration:underline}
+.resend-btn:disabled{color:var(--muted);cursor:not-allowed;text-decoration:none}
+.td-row{display:flex;align-items:center;gap:8px;margin-bottom:16px;cursor:pointer;user-select:none}
+.td-box{width:17px;height:17px;flex-shrink:0;border:0.5px solid var(--border3);border-radius:5px;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.td-box.on{background:var(--accent);border-color:var(--accent)}
+.td-box.on::after{content:'';display:block;width:9px;height:6px;border-left:1.5px solid white;border-bottom:1.5px solid white;transform:rotate(-45deg) translateY(-1px)}
+.td-lbl{font-size:12px;color:var(--muted2)}
+
+/* Blocked */
+.blocked-wrap{text-align:center;padding:12px 0 4px}
+.blocked-glyph{font-size:32px;margin-bottom:12px;opacity:.45}
+.blocked-title{font-size:14px;font-weight:700;color:var(--red);margin-bottom:6px}
+.blocked-timer{font-family:var(--mono);font-size:28px;color:var(--red);margin:10px 0;letter-spacing:2px}
+.blocked-sub{font-size:12px;color:var(--muted2);line-height:1.6;max-width:280px;margin:0 auto}
+
+/* Forgot */
+.forgot-desc{font-size:12px;color:var(--muted2);line-height:1.65;margin-bottom:16px}
+
+/* Button */
+.btn{width:100%;padding:12px 20px;background:var(--accent);border:none;border-radius:10px;font-size:14px;font-weight:600;font-family:var(--sans);color:white;cursor:pointer;transition:background .2s,transform .15s,box-shadow .2s;display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px}
+.btn:hover:not(:disabled){background:var(--accent-h);transform:translateY(-1px);box-shadow:0 4px 20px rgba(91,79,207,.3)}
+.btn:active:not(:disabled){transform:translateY(0);box-shadow:none}
+.btn:disabled{background:var(--s3);color:var(--muted);cursor:not-allowed;transform:none;box-shadow:none}
+.btn.bok{background:var(--green)!important;transform:none!important}
+.spin{width:15px;height:15px;border:2px solid rgba(255,255,255,.22);border-top-color:white;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.back-link{display:block;text-align:center;margin-top:12px;font-family:var(--mono);font-size:10px;color:var(--muted2);text-decoration:none}
+.back-link:hover{color:var(--text)}
+
+/* Card footer */
+.card-foot{padding:14px 28px;border-top:0.5px solid var(--border);display:flex;align-items:center;justify-content:center;gap:5px}
+.foot-text{font-size:12px;color:var(--muted2)}
+.foot-link{font-size:12px;color:var(--accent-h);text-decoration:none;font-weight:500}
+.foot-link:hover{text-decoration:underline}
+
+/* Bottom secure line */
+.secure-row{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:18px}
+.si{display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:9px;color:var(--muted);opacity:.55}
+.si svg{width:10px;height:10px}
+.rs-star-canvas{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:2}.rs-star-dot{position:absolute;border-radius:50%;animation:rsFall linear infinite}@keyframes rsFall{from{transform:translateY(-10px);opacity:0}5%{opacity:1}95%{opacity:1}to{transform:translateY(100vh);opacity:0}}</style>
+</head>
+<body><div id="rsStarCanvas" class="rs-star-canvas" aria-hidden="true"></div><script>document.addEventListener("DOMContentLoaded",function(){var c=document.getElementById("rsStarCanvas");if(!c)return;for(var i=0;i<150;i++){var s=document.createElement("div");s.className="rs-star-dot";var sz=(Math.random()*1.8+0.4).toFixed(2);var dur=(Math.random()*12+8).toFixed(1);var delay=(Math.random()*-20).toFixed(1);var op=(Math.random()*0.5+0.4).toFixed(2);s.style.cssText="left:"+(Math.random()*100).toFixed(2)+"%;top:0;width:"+sz+"px;height:"+sz+"px;background:rgba(255,255,255,"+op+");animation-duration:"+dur+"s;animation-delay:"+delay+"s";c.appendChild(s);}});</script>
+<div class="bg"><div class="bg-orb orb1"></div><div class="bg-orb orb2"></div></div>
+
+<div class="page">
+<div class="card">
+
+<div class="card-head">
+  <div class="logo-row">
+    <div class="logo-mark"><svg viewBox="0 0 16 16"><path d="M8 1L2 4v4c0 3.3 2.6 6.4 6 7.1C11.4 14.4 14 11.3 14 8V4L8 1z"/></svg></div>
+    <span class="logo-name">RunSpace</span>
+    <a href="/" class="logo-back">← back</a>
+  </div>
+  <div class="head-title" id="htitle">Welcome back</div>
+  <div class="head-sub" id="hsub">Sign in to your account</div>
+</div>
+
+<div class="card-body">
+
+  <!-- Session bar -->
+  <div class="sbar" id="sbar">
+    <div class="sdot pulse" id="sdot"></div>
+    <div class="shimmer-wrap" id="shimmer"><div class="shimmer-bar"></div></div>
+    <span class="slabel" id="slabel"></span>
+    <span class="sbadge" id="sbadge"></span>
+  </div>
+
+  <!-- Trust indicators -->
+  <div class="ti-row">
+    <div class="ti" id="ti-sec"><div class="ti-d"></div>Secure session</div>
+    <div class="ti" id="ti-dev"><div class="ti-d"></div>Device check</div>
+    <div class="ti" id="ti-enc"><div class="ti-d"></div>Encrypted</div>
+  </div>
+
+  <!-- Device recognized -->
+  <div class="devbadge" id="devbadge">
+    <div class="devpulse"></div>
+    <span class="devtext">Trusted device recognized</span>
+  </div>
+
+  <!-- Alerts -->
+  <div class="alert ae" id="al-err"><span class="alert-icon">⊘</span><div class="alert-body"><div class="alert-title" id="al-err-t">Incorrect credentials</div><div class="alert-sub" id="al-err-s">Check your username and password and try again.</div></div></div>
+  <div class="alert aw" id="al-warn"><span class="alert-icon">◈</span><div class="alert-body"><div class="alert-title" id="al-warn-t">Verification required</div><div class="alert-sub" id="al-warn-s">We need to verify it's you before continuing.</div></div></div>
+  <div class="alert ag" id="al-ok"><span class="alert-icon">✓</span><div class="alert-body"><div class="alert-title" id="al-ok-t">Done</div><div class="alert-sub" id="al-ok-s"></div></div></div>
+
+  <!-- PANEL: LOGIN -->
+  <div class="panel active" id="p-login">
+    <!-- Login method tabs -->
+    <div style="display:flex;gap:6px;margin-bottom:16px">
+      <button id="tab-pw" onclick="setLoginTab('pw')" style="flex:1;padding:8px;border-radius:8px;border:0.5px solid var(--accent);background:rgba(91,79,207,.12);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)">Password</button>
+      <button id="tab-key" onclick="setLoginTab('key')" style="flex:1;padding:8px;border-radius:8px;border:0.5px solid var(--border2);background:none;color:var(--muted2);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)">Account key</button>
+    </div>
+
+    <!-- Password login -->
+    <div id="login-pw">
+      <div class="field">
+        <div class="ftop"><label class="flabel">Username or email</label></div>
+        <input class="finput" type="text" id="fu" placeholder="your username" autocomplete="username" spellcheck="false"/>
+        <div class="fmsg err" id="eu"></div>
+      </div>
+      <div class="field">
+        <div class="ftop">
+          <label class="flabel">Password</label>
+          <a href="#" class="flink" onclick="gotoForgot();return false">Forgot password?</a>
+        </div>
+        <div class="fwrap">
+          <input class="finput has-icon" type="password" id="fp" placeholder="your password" autocomplete="current-password"/>
+          <button class="eye-btn" type="button" id="eye1" onclick="toggleEye('fp','eye1')" title="Toggle password">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+        <div class="fmsg err" id="ep"></div>
+      </div>
+      <button class="btn" id="lbtn" onclick="handleLogin()"><span id="lbln">Sign in</span></button>
+    </div>
+
+    <!-- Key login -->
+    <div id="login-key" style="display:none">
+      <div class="field">
+        <label class="flabel">Account key <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none">UUID format</span></label>
+        <input class="finput" type="text" id="fkey" placeholder="xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false" style="font-family:var(--mono);font-size:12px"/>
+        <div class="fmsg err" id="ekey"></div>
+      </div>
+      <div style="margin-bottom:14px">
+        <button onclick="loadKeyFromFile()" style="width:100%;padding:10px;border-radius:9px;border:0.5px dashed var(--border3);background:none;color:var(--muted2);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:all .2s">
+          Upload .key file instead
+        </button>
+        <input type="file" id="keyfile" accept=".key" style="display:none" onchange="handleKeyFile(this)"/>
+      </div>
+      <button class="btn" id="klbtn" onclick="handleKeyLogin()"><span id="klbln">Sign in with key</span></button>
+    </div>
+  </div>
+
+  <!-- PANEL: OTP -->
+  <div class="panel" id="p-otp">
+    <div class="otp-desc">We sent a 6-digit code to <span class="otp-em" id="otp-em">your email</span>. Enter it below to continue.</div>
+    <div class="digits" id="digs">
+      <input class="dg" maxlength="1" type="text" inputmode="numeric"/>
+      <input class="dg" maxlength="1" type="text" inputmode="numeric"/>
+      <input class="dg" maxlength="1" type="text" inputmode="numeric"/>
+      <input class="dg" maxlength="1" type="text" inputmode="numeric"/>
+      <input class="dg" maxlength="1" type="text" inputmode="numeric"/>
+      <input class="dg" maxlength="1" type="text" inputmode="numeric"/>
+    </div>
+    <div class="otp-foot">
+      <span class="otp-timer" id="otimer">Expires in 10:00</span>
+      <button class="resend-btn" id="resend-btn" onclick="resendOtp()">Resend code</button>
+    </div>
+    <label class="td-row" onclick="toggleTD()">
+      <div class="td-box" id="td-box"></div>
+      <span class="td-lbl">Trust this device — skip verification next time</span>
+    </label>
+    <button class="btn" id="obtn" onclick="handleOtpVerify()"><span id="obln">Verify &amp; sign in</span></button>
+    <a href="#" class="back-link" onclick="goBack();return false">← Back to sign in</a>
+  </div>
+
+  <!-- PANEL: BLOCKED -->
+  <div class="panel" id="p-blocked">
+    <div class="blocked-wrap">
+      <div class="blocked-glyph">⊘</div>
+      <div class="blocked-title">Access temporarily restricted</div>
+      <div class="blocked-timer" id="btimer">5:00</div>
+      <div class="blocked-sub" id="bsub">Too many failed attempts from this session. Please wait before trying again.</div>
+    </div>
+  </div>
+
+  <!-- PANEL: FORGOT -->
+  <div class="panel" id="p-forgot">
+    <div class="forgot-desc">Enter your email and we'll send a reset link if an account exists.</div>
+    <div class="field">
+      <label class="flabel">Email address</label>
+      <input class="finput" type="email" id="freset" placeholder="your email" autocomplete="email"/>
+      <div class="fmsg err" id="ereset"></div>
+    </div>
+    <button class="btn" id="fbtn" onclick="handleForgot()"><span id="fbln">Send reset link</span></button>
+    <a href="#" class="back-link" onclick="goBack();return false">← Back to sign in</a>
+  </div>
+
+</div><!-- /card-body -->
+
+<div class="card-foot">
+  <span class="foot-text">No account?</span>
+  <a href="/register" class="foot-link">Create one</a>
+</div>
+</div><!-- /card -->
+
+<div class="secure-row">
+  <div class="si"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1L2 4v4c0 3.3 2.6 6.4 6 7.1C11.4 14.4 14 11.3 14 8V4L8 1z"/></svg>End-to-end encrypted</div>
+  <div class="si"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V5a3 3 0 016 0v2"/></svg>Zero-knowledge auth</div>
+  <div class="si"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>Trust engine active</div>
+</div>
+</div><!-- /page -->
+
+<script>
+// ── SIGNAL COLLECTION ──
+var SIG={fillAt:null,mouse:0,keys:0,paste:false,tabs:0};
+var sessionStart=Date.now(),mousePos=[],firstInput=false;
+document.addEventListener('mousemove',function(e){SIG.mouse++;mousePos.push([e.clientX,e.clientY]);if(mousePos.length>200)mousePos.shift()});
+document.addEventListener('keydown',function(){if(!firstInput){firstInput=true;SIG.fillAt=Date.now()}SIG.keys++});
+document.addEventListener('paste',function(){SIG.paste=true});
+document.addEventListener('visibilitychange',function(){if(document.hidden)SIG.tabs++});
+function entropy(){if(mousePos.length<10)return 0;var d=[];for(var i=1;i<mousePos.length;i++){var dx=mousePos[i][0]-mousePos[i-1][0],dy=mousePos[i][1]-mousePos[i-1][1];if(dx||dy)d.push(Math.atan2(dy,dx))}if(d.length<5)return 0;var m=d.reduce(function(a,b){return a+b},0)/d.length,v=d.reduce(function(s,x){return s+Math.pow(x-m,2)},0)/d.length;return Math.min(1,v/2)}
+function canvasHash(){try{var c=document.createElement('canvas');c.width=200;c.height=50;var x=c.getContext('2d');x.textBaseline='top';x.font='14px Arial';x.fillStyle='#f60';x.fillRect(125,1,62,20);x.fillStyle='#069';x.fillText('RunSpace',2,15);var d=c.toDataURL(),h=0;for(var i=0;i<d.length;i++){h=((h<<5)-h)+d.charCodeAt(i);h|=0}return Math.abs(h).toString(16).slice(0,8)}catch(e){return'err'}}
+function isHeadless(){return[navigator.webdriver===true,/HeadlessChrome/.test(navigator.userAgent),!navigator.plugins||navigator.plugins.length===0,typeof navigator.languages==='undefined'||navigator.languages.length===0].filter(Boolean).length>=2}
+function devToken(){try{var k='rs_dt',e=localStorage.getItem(k);if(e)return e;var a=new Uint8Array(24);crypto.getRandomValues(a);var t='dt_'+Array.from(a).map(function(b){return b.toString(16).padStart(2,'0')}).join('');localStorage.setItem(k,t);return t}catch(e){return''}}
+function buildSignals(){var now=Date.now();return{fillDurationMs:SIG.fillAt?now-SIG.fillAt:0,mouseEventCount:SIG.mouse,keystrokeCount:SIG.keys,copyPasteDetected:SIG.paste,tabSwitchCount:SIG.tabs,mouseEntropyScore:+entropy().toFixed(2),isHeadless:isHeadless(),webDriverPresent:!!navigator.webdriver,pluginCount:navigator.plugins?navigator.plugins.length:0,canvasHash:canvasHash(),screenResolution:screen.width+'x'+screen.height,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||'',userAgent:navigator.userAgent,cookiesEnabled:navigator.cookieEnabled,referrer:document.referrer,sessionAgeSeconds:Math.floor((now-sessionStart)/1000),deviceToken:devToken()}}
+
+// ── SESSION BAR ──
+var sbPhases=['Checking device...','Analyzing session...','Verifying environment...','Reading signals...'];
+var sbIdx=0,sbInterval=null,sbDone=false;
+function startSBar(){
+  setTimeout(function(){
+    document.getElementById('shimmer').style.display='none';
+    var lbl=document.getElementById('slabel');
+    lbl.classList.add('show');lbl.textContent=sbPhases[0];lbl.style.color='var(--muted2)';
+    sbInterval=setInterval(function(){
+      if(sbDone)return;
+      sbIdx=(sbIdx+1)%sbPhases.length;
+      lbl.style.opacity='0';
+      setTimeout(function(){lbl.textContent=sbPhases[sbIdx];lbl.style.opacity='1'},180);
+    },2200);
+  },800);
+  setTimeout(function(){if(!sbDone)markSBarReady()},6000);
+}
+function markSBarReady(){
+  sbDone=true;if(sbInterval)clearInterval(sbInterval);
+  var dt=devToken(),trusted=dt&&localStorage.getItem('rs_trusted_'+dt)==='1';
+  var bar=document.getElementById('sbar'),dot=document.getElementById('sdot'),lbl=document.getElementById('slabel'),badge=document.getElementById('sbadge');
+  dot.classList.remove('pulse');
+  document.getElementById('shimmer').style.display='none';
+  lbl.classList.add('show');
+  if(trusted){
+    bar.classList.add('ok');dot.style.background='var(--green)';
+    lbl.textContent='Trusted device recognized';lbl.style.color='var(--green)';
+    badge.style.display='block';badge.textContent='trusted';badge.style.color='var(--green)';badge.style.borderColor='var(--green-b)';badge.style.background='var(--green-dim)';
+    document.getElementById('devbadge').classList.add('show');
+    ['ti-sec','ti-dev','ti-enc'].forEach(function(id){document.getElementById(id).classList.add('lit')});
+  }else{
+    lbl.textContent='New session — unverified';lbl.style.color='var(--muted2)';
+    badge.style.display='block';badge.textContent='unverified';badge.style.color='var(--muted2)';badge.style.borderColor='var(--border2)';
+    ['ti-sec','ti-enc'].forEach(function(id){document.getElementById(id).classList.add('lit')});
+  }
+}
+function sbarState(state,text,badgeText){
+  var bar=document.getElementById('sbar'),dot=document.getElementById('sdot'),lbl=document.getElementById('slabel'),badge=document.getElementById('sbadge');
+  if(sbInterval)clearInterval(sbInterval);sbDone=true;
+  document.getElementById('shimmer').style.display='none';lbl.classList.add('show');
+  bar.className='sbar '+state;
+  var colors={ok:'var(--green)',bad:'var(--red)',warn:'var(--yellow)'};
+  var c=colors[state]||'var(--muted2)';
+  dot.style.background=c;dot.classList.remove('pulse');
+  lbl.textContent=text;lbl.style.color=c;
+  if(badgeText){badge.style.display='block';badge.textContent=badgeText;badge.style.color=c;badge.style.borderColor=c+'44';badge.style.background='transparent'}
+}
+
+// ── PANELS ──
+var curPanel='login',pendingToken='',trustDevice=false,otpSecs=600,otpInt=null,blockedInt=null,resendCD=0,enteredEmail='';
+var panelMeta={login:{t:'Welcome back',s:'Sign in to your account'},otp:{t:'Verify your identity',s:'Extra step for this session'},blocked:{t:'Access restricted',s:'Please wait before retrying'},forgot:{t:'Reset password',s:"We'll send you a reset link"}};
+
+function showPanel(id){
+  document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active')});
+  document.getElementById('p-'+id).classList.add('active');
+  curPanel=id;
+  var m=panelMeta[id];
+  if(m){document.getElementById('htitle').textContent=m.t;document.getElementById('hsub').textContent=m.s}
+}
+function goBack(){clearAlerts();showPanel('login')}
+function gotoForgot(){clearAlerts();showPanel('forgot')}
+
+// ── ALERTS ──
+function clearAlerts(){['al-err','al-warn','al-ok'].forEach(function(id){document.getElementById(id).classList.remove('show')})}
+function showErr(t,s){clearAlerts();document.getElementById('al-err-t').textContent=t||'Error';document.getElementById('al-err-s').textContent=s||'';document.getElementById('al-err').classList.add('show')}
+function showWarn(t,s){clearAlerts();document.getElementById('al-warn-t').textContent=t||'Warning';document.getElementById('al-warn-s').textContent=s||'';document.getElementById('al-warn').classList.add('show')}
+function showOk(t,s){clearAlerts();document.getElementById('al-ok-t').textContent=t||'Done';document.getElementById('al-ok-s').textContent=s||'';document.getElementById('al-ok').classList.add('show')}
+
+// ── BUTTONS ──
+function setBtn(id,lId,state,text){
+  var b=document.getElementById(id);b.className='btn';b.disabled=false;
+  if(state==='loading'){b.disabled=true;b.innerHTML='<div class="spin"></div><span>'+text+'</span>'}
+  else if(state==='ok'){b.disabled=true;b.classList.add('bok');b.innerHTML='<span>&#10003; '+text+'</span>'}
+  else{b.innerHTML='<span id="'+lId+'">'+text+'</span>'}
+}
+
+// ── FIELDS ──
+function fErr(iId,mId,msg){var i=document.getElementById(iId);if(i)i.classList.add('ferr');var m=document.getElementById(mId);if(m){m.textContent=msg||'';m.className='fmsg err'+(msg?' show':'')}}
+function fClear(iId,mId){var i=document.getElementById(iId);if(i)i.classList.remove('ferr','fok');var m=document.getElementById(mId);if(m)m.classList.remove('show')}
+
+// ── EYE TOGGLE ──
+var eyeOpen='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+var eyeClosed='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+function toggleEye(inputId,btnId){var inp=document.getElementById(inputId),btn=document.getElementById(btnId),hidden=inp.type==='password';inp.type=hidden?'text':'password';btn.innerHTML=hidden?eyeClosed:eyeOpen}
+
+// ── LOGIN ──
+function validateLogin(){
+  var ok=true;fClear('fu','eu');fClear('fp','ep');
+  if(!document.getElementById('fu').value.trim()){fErr('fu','eu','Username or email is required');ok=false}
+  if(!document.getElementById('fp').value){fErr('fp','ep','Password is required');ok=false}
+  return ok
+}
+async function handleLogin(){
+  if(curPanel!=='login')return;
+  if(!validateLogin())return;
+  clearAlerts();
+  var user=document.getElementById('fu').value.trim();
+  var pw=document.getElementById('fp').value;
+  enteredEmail=user.includes('@')?user:'';
+  setBtn('lbtn','lbln','loading','Signing in...');
+  var payload={username:user,password:pw,signals:buildSignals()};
+  try{
+    var res=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json','X-Device-Token':payload.signals.deviceToken},body:JSON.stringify(payload)});
+    handleAuthResp(await res.json());
+  }catch(e){
+    setBtn('lbtn','lbln','normal','Sign in');
+    showErr('Connection error','Could not reach the server. Check your network and try again.');
+  }
+}
+function handleAuthResp(data){
+  if(data.status==='ok'){
+    // Cookie sätts av backend — spara bara deviceToken lokalt
+    if(data.deviceToken){
+      localStorage.setItem('rs_dt',data.deviceToken);
+      localStorage.setItem('rs_trusted_'+data.deviceToken,'1');
+    }
+    setBtn('lbtn','lbln','ok','Signed in');
+    showOk('Signed in','Redirecting now...');
+    sbarState('ok','Authenticated','trusted');
+    ['ti-sec','ti-dev','ti-enc'].forEach(function(id){document.getElementById(id).classList.add('lit')});
+    setTimeout(function(){window.location.href=data.redirect||'/app'},900);
+
+  }else if(data.status==='otp_required'){
+    pendingToken=data.pendingToken;
+    setBtn('lbtn','lbln','normal','Sign in');
+    // Anpassa OTP-text baserat på typ (email vs totp/authenticator)
+    var isTotp=data.otpType==='totp';
+    var warnMsg=isTotp
+      ?'Open your authenticator app and enter the code.'
+      :'A 6-digit code was sent to your email address.';
+    var otpDesc=isTotp
+      ?'Enter the code from your <span class="otp-em">authenticator app</span>.'
+      :'We sent a 6-digit code to <span class="otp-em">'+(enteredEmail||'your email')+'</span>. Enter it below to continue.';
+    showWarn("We need to verify it's you", warnMsg);
+    document.getElementById('otp-desc').innerHTML=otpDesc;
+    // Resend-knapp dold vid TOTP (kan inte skicka om authenticator-kod)
+    document.getElementById('resend-btn').style.display=isTotp?'none':'block';
+    showPanel('otp');
+    if(!isTotp)startOtpTimer();
+    else document.getElementById('otimer').textContent='From your authenticator app';
+    sbarState('warn','Verification required','otp');
+    setTimeout(function(){document.querySelector('#p-otp .dg').focus()},100);
+
+  }else if(data.status==='blocked'){
+    setBtn('lbtn','lbln','normal','Sign in');
+    showPanel('blocked');
+    document.getElementById('bsub').textContent=data.message||'Too many failed attempts. Please wait before trying again.';
+    startBlockedTimer(data.retryAfter||300);
+    sbarState('bad','Session blocked','blocked');
+
+  }else{
+    setBtn('lbtn','lbln','normal','Sign in');
+    document.getElementById('fp').value='';document.getElementById('fp').focus();
+    showErr('Incorrect credentials',data.message||'Check your username and password and try again.');
+    sbarState('bad','Authentication failed','failed');
+  }
+}
+
+// ── OTP ──
+var tdOn=false;
+function toggleTD(){tdOn=!tdOn;var b=document.getElementById('td-box');tdOn?b.classList.add('on'):b.classList.remove('on')}
+function startOtpTimer(){
+  otpSecs=600;if(otpInt)clearInterval(otpInt);
+  updateOtpTimer(otpSecs);resendCD=30;
+  document.getElementById('resend-btn').disabled=true;document.getElementById('resend-btn').textContent='Resend in 30s';
+  otpInt=setInterval(function(){
+    otpSecs--;updateOtpTimer(otpSecs);
+    if(resendCD>0){resendCD--;var rb=document.getElementById('resend-btn');if(resendCD>0){rb.disabled=true;rb.textContent='Resend in '+resendCD+'s'}else{rb.disabled=false;rb.textContent='Resend code'}}
+    if(otpSecs<=0){clearInterval(otpInt);var t=document.getElementById('otimer');t.textContent='Code expired';t.style.color='var(--red)'}
+  },1000)
+}
+function updateOtpTimer(s){var m=Math.floor(s/60),r=s%60;document.getElementById('otimer').textContent='Expires in '+m+':'+(r<10?'0':'')+r}
+async function handleOtpVerify(){
+  var digits=Array.from(document.querySelectorAll('#p-otp .dg')).map(function(i){return i.value}),code=digits.join('');
+  if(code.length<6){showErr('Incomplete code','Enter all 6 digits to continue.');return}
+  clearAlerts();setBtn('obtn','obln','loading','Verifying...');
+  try{
+    var res=await fetch('/api/auth/verify-otp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pendingToken:pendingToken,code:code,deviceToken:devToken(),trustDevice:tdOn})});
+    var data=await res.json();
+    if(data.status==='ok'){
+      // Cookie sätts av backend — spara deviceToken om user valde trust
+      if(data.deviceToken&&tdOn){
+        localStorage.setItem('rs_dt',data.deviceToken);
+        localStorage.setItem('rs_trusted_'+data.deviceToken,'1');
+      }
+      setBtn('obtn','obln','ok','Verified');showOk('Identity confirmed','Signing you in...');
+      sbarState('ok','Verified','trusted');
+      setTimeout(function(){window.location.href=data.redirect||'/app'},900);
+    }else if(data.status==='blocked'){
+      showPanel('blocked');startBlockedTimer(60);sbarState('bad','Session blocked','blocked');
+    }else{
+      setBtn('obtn','obln','normal','Verify &amp; sign in');
+      showErr('Incorrect code',data.attemptsLeft?data.attemptsLeft+' attempts remaining.':'Try again or request a new code.');
+      document.querySelectorAll('#p-otp .dg').forEach(function(d){d.classList.add('shake');setTimeout(function(){d.classList.remove('shake');d.value='';d.classList.remove('filled')},380)});
+      setTimeout(function(){document.querySelector('#p-otp .dg').focus()},420);
+    }
+  }catch(e){setBtn('obtn','obln','normal','Verify &amp; sign in');showErr('Connection error','Could not reach the server.')}
+}
+async function resendOtp(){
+  if(!pendingToken)return;resendCD=30;document.getElementById('resend-btn').disabled=true;
+  try{
+    var res=await fetch('/api/auth/resend-otp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pendingToken:pendingToken})});
+    var data=await res.json();
+    if(data.status==='ok')showOk('Code resent','Check your inbox for a new code.');
+    else showErr('Could not resend',data.message||'Try again in a moment.');
+  }catch(e){showErr('Connection error','Please try again.')}
+}
+
+// ── BLOCKED ──
+function startBlockedTimer(secs){
+  if(blockedInt)clearInterval(blockedInt);
+  function fmt(s){var m=Math.floor(s/60),r=s%60;return m+':'+(r<10?'0':'')+r}
+  document.getElementById('btimer').textContent=fmt(secs);
+  blockedInt=setInterval(function(){secs--;document.getElementById('btimer').textContent=fmt(secs);if(secs<=0){clearInterval(blockedInt);location.reload()}},1000)
+}
+
+// ── FORGOT ──
+async function handleForgot(){
+  fClear('freset','ereset');
+  var email=document.getElementById('freset').value.trim();
+  if(!email||!email.includes('@')){fErr('freset','ereset','Enter a valid email address');return}
+  clearAlerts();setBtn('fbtn','fbln','loading','Sending...');
+  try{
+    await fetch('/api/auth/forgot-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email})});
+    setBtn('fbtn','fbln','ok','Link sent');showOk('Check your email','If an account exists, a reset link has been sent.');
+  }catch(e){setBtn('fbtn','fbln','normal','Send reset link');showErr('Connection error','Could not send reset link. Try again.')}
+}
+
+// ── OTP DIGIT UX ──
+document.querySelectorAll('#p-otp .dg').forEach(function(inp,i,all){
+  inp.addEventListener('input',function(){var v=inp.value.replace(/\D/g,'');inp.value=v.slice(-1);if(v){inp.classList.add('filled');if(i<all.length-1)all[i+1].focus();else{inp.blur();handleOtpVerify()}}else inp.classList.remove('filled')});
+  inp.addEventListener('keydown',function(e){if(e.key==='Backspace'&&!inp.value&&i>0){all[i-1].value='';all[i-1].classList.remove('filled');all[i-1].focus()}});
+  inp.addEventListener('paste',function(e){e.preventDefault();var t=(e.clipboardData||window.clipboardData).getData('text').replace(/\D/g,'');all.forEach(function(d,j){if(t[j]){d.value=t[j];d.classList.add('filled')}});if(t.length>=6)handleOtpVerify();else all[Math.min(t.length,5)].focus()});
+});
+
+// ── ENTER KEY ──
+document.addEventListener('keydown',function(e){
+  if(e.key!=='Enter')return;
+  if(curPanel==='login')handleLogin();
+  else if(curPanel==='forgot')handleForgot();
+});
+
+// ── SESSION CHECK — cookie skickas automatiskt ──
+(function(){
+  fetch('/api/auth/validate',{credentials:'include'})
+    .then(function(r){if(r.ok)window.location.href='/app'})
+    .catch(function(){});
+})();
+
+// ── LOGIN TAB ──
+var loginTab = 'pw';
+function setLoginTab(tab) {
+  loginTab = tab;
+  document.getElementById('login-pw').style.display = tab === 'pw' ? 'block' : 'none';
+  document.getElementById('login-key').style.display = tab === 'key' ? 'block' : 'none';
+  var tabPw = document.getElementById('tab-pw');
+  var tabKey = document.getElementById('tab-key');
+  if (tab === 'pw') {
+    tabPw.style.border = '0.5px solid var(--accent)'; tabPw.style.background = 'rgba(91,79,207,.12)'; tabPw.style.color = 'var(--accent)';
+    tabKey.style.border = '0.5px solid var(--border2)'; tabKey.style.background = 'none'; tabKey.style.color = 'var(--muted2)';
+  } else {
+    tabKey.style.border = '0.5px solid var(--accent)'; tabKey.style.background = 'rgba(91,79,207,.12)'; tabKey.style.color = 'var(--accent)';
+    tabPw.style.border = '0.5px solid var(--border2)'; tabPw.style.background = 'none'; tabPw.style.color = 'var(--muted2)';
+  }
+}
+
+// ── KEY FILE UPLOAD ──
+function loadKeyFromFile() { document.getElementById('keyfile').click(); }
+async function handleKeyFile(input) {
+  var file = input.files[0]; if (!file) return;
+  var pp = prompt('Enter your passphrase to decrypt the key file:');
+  if (!pp) return;
+  try {
+    var buf = await file.arrayBuffer();
+    var data = new Uint8Array(buf);
+    if (data[0] !== 0x52 || data[1] !== 0x53 || data[2] !== 0x4B || data[3] !== 0x31) { showErr('Invalid file', 'Not a valid RunSpace key file.'); return; }
+    var salt = data.slice(4, 20);
+    var iv = data.slice(20, 32);
+    var ciphertext = data.slice(32);
+    var enc = new TextEncoder();
+    var baseKey = await crypto.subtle.importKey('raw', enc.encode(pp), {name:'PBKDF2'}, false, ['deriveKey']);
+    var aesKey = await crypto.subtle.deriveKey(
+      {name:'PBKDF2', salt:salt, iterations:100000, hash:'SHA-256'},
+      baseKey, {name:'AES-GCM', length:256}, false, ['decrypt']
+    );
+    var plain = await crypto.subtle.decrypt({name:'AES-GCM', iv:iv}, aesKey, ciphertext);
+    var key = new TextDecoder().decode(plain);
+    document.getElementById('fkey').value = key;
+    showOk('Key loaded', 'Your account key has been loaded. Click Sign in to continue.');
+  } catch(e) {
+    showErr('Decryption failed', 'Wrong passphrase or corrupted file.');
+  }
+}
+
+// ── KEY LOGIN ──
+async function handleKeyLogin() {
+  var key = document.getElementById('fkey').value.trim();
+  if (!key) { showErr('Key required', 'Enter your account key or upload your .key file.'); return; }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(key)) {
+    showErr('Invalid key format', 'Key must be a valid UUID v4.');
+    return;
+  }
+  clearAlerts();
+  setBtn('klbtn','klbln','loading','Signing in...');
+  try {
+    var res = await fetch('/api/auth/login-with-key', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-Device-Token': devToken()},
+      body: JSON.stringify({accountKey: key})
+    });
+    var data = await res.json();
+    if (data.status === 'ok') {
+      setBtn('klbtn','klbln','ok','Signed in');
+      showOk('Signed in', 'Redirecting...');
+      sbarState('ok','Authenticated','trusted');
+      setTimeout(function(){ window.location.href = data.redirect || '/app'; }, 900);
+    } else {
+      setBtn('klbtn','klbln','normal','Sign in with key');
+      showErr('Invalid key', data.message || 'Could not sign in with this key.');
+      sbarState('bad','Authentication failed','failed');
+    }
+  } catch(e) {
+    setBtn('klbtn','klbln','normal','Sign in with key');
+    showErr('Connection error', 'Could not reach the server.');
+  }
+}
+
+// ── INIT ──
+startSBar();
+</script>
+    <script src="/pwa.js" defer></script>
+</body>
+</html>

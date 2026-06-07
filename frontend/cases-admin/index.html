@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en"><head><script src="../theme.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Cases Admin · RunSpace</title>
+<link rel="icon" href="/favicon.ico">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+<style>
+.main{padding:40px 48px;max-width:1100px;position:relative;z-index:1}
+.page-eyebrow{font-family:var(--font-mono);font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px}
+.page-title{font-size:28px;font-weight:800;margin-bottom:24px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;margin-bottom:16px}
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px}
+.stat-label{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-family:var(--font-mono);margin-bottom:6px}
+.stat-value{font-size:24px;font-weight:800}
+.filters{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.filter-btn{padding:7px 14px;border-radius:8px;border:1px solid var(--border);background:none;color:var(--muted);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--font-mono);transition:all .15s}
+.filter-btn.active{background:rgba(59,125,255,.12);color:var(--accent);border-color:rgba(59,125,255,.2)}
+.ticket-table{width:100%;border-collapse:collapse}
+.ticket-table th{text-align:left;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-family:var(--font-mono);padding:8px 12px;border-bottom:1px solid var(--border)}
+.ticket-table td{padding:12px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+.ticket-table tr:hover td{background:rgba(255,255,255,.02);cursor:pointer}
+.status-badge{padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;font-family:var(--font-mono)}
+.status-badge.open{background:rgba(59,125,255,.12);color:var(--accent)}
+.status-badge.pending{background:rgba(245,158,11,.12);color:#f59e0b}
+.status-badge.resolved{background:rgba(16,185,129,.12);color:#10b981}
+.status-badge.closed{background:rgba(255,255,255,.06);color:var(--muted)}
+.prio-badge{padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;font-family:var(--font-mono)}
+.prio-badge.low{background:rgba(16,185,129,.1);color:#10b981}
+.prio-badge.medium{background:rgba(245,158,11,.1);color:#f59e0b}
+.prio-badge.high{background:rgba(239,68,68,.1);color:#ef4444}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);backdrop-filter:blur(4px);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px}
+.modal{background:var(--bg);border:1px solid var(--border);border-radius:16px;width:100%;max-width:680px;max-height:90vh;overflow-y:auto;padding:28px}
+.modal-title{font-size:18px;font-weight:800;margin-bottom:4px}
+.modal-meta{font-size:12px;color:var(--muted);font-family:var(--font-mono);margin-bottom:20px}
+.modal-body{font-size:14px;color:var(--text);line-height:1.6;white-space:pre-wrap;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:20px}
+.modal-actions{display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid var(--border);background:none;color:var(--text);transition:all .15s;font-family:var(--font-body)}
+.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn-success{background:#10b981;color:#fff;border-color:#10b981}
+.btn-warn{background:#f59e0b;color:#fff;border-color:#f59e0b}
+.btn-danger{background:#ef4444;color:#fff;border-color:#ef4444}
+.btn-ghost{color:var(--muted)}
+.reply-section h4{font-size:13px;font-weight:700;margin-bottom:8px}
+.reply-textarea{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px;font-size:14px;color:var(--text);font-family:var(--font-body);outline:none;resize:vertical;min-height:100px}
+.reply-textarea:focus{border-color:var(--accent)}
+.messages-list{display:flex;flex-direction:column;gap:10px;margin-bottom:20px}
+.msg{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px}
+.msg-header{display:flex;justify-content:space-between;margin-bottom:6px}
+.msg-author{font-size:12px;font-weight:700;font-family:var(--font-mono)}
+.msg-author.admin{color:var(--accent)}
+.msg-date{font-size:11px;color:var(--muted);font-family:var(--font-mono)}
+.msg-body{font-size:13px;color:var(--text);line-height:1.5;white-space:pre-wrap}
+.hidden{display:none!important}
+.toast{position:fixed;top:24px;right:24px;z-index:999;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 20px;font-size:14px;font-weight:600;box-shadow:0 8px 32px rgba(0,0,0,.2);transform:translateX(120%);transition:transform .3s}
+.toast.show{transform:translateX(0)}
+.toast.success{border-color:rgba(16,185,129,.3);color:#10b981}
+.toast.error{border-color:rgba(239,68,68,.3);color:#ef4444}
+.rs-star-canvas{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+.rs-star-dot{position:absolute;border-radius:50%;animation:rsFall linear infinite}
+@keyframes rsFall{from{transform:translateY(-10px);opacity:0}5%{opacity:1}95%{opacity:1}to{transform:translateY(100vh);opacity:0}}
+</style>
+</head>
+<body>
+<div id="rsStarCanvas" class="rs-star-canvas" aria-hidden="true"></div>
+<div class="shell">
+<aside class="side" id="sidebar">
+<div class="logo"><div class="logo-icon">R</div><span>RunSpace</span></div>
+<div class="nav-label">Admin</div>
+<a href="/" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24"><path d="M3 12l9-9 9 9"/><path d="M5 10v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V10"/></svg>Home</a>
+<a href="/admin" class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.5 8.5-8 9-4.5-.5-8-4.5-8-9V6l8-3z"/></svg>Admin panel</a>
+<a href="/cases-admin" class="nav-item active"><svg class="nav-icon" viewBox="0 0 24 24"><path d="M4 8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4V8z"/></svg>Cases</a>
+<div class="side-footer">RunSpace © 2026</div>
+</aside>
+<main class="main">
+<div class="page-eyebrow">Admin</div>
+<h1 class="page-title">Support cases</h1>
+
+<div class="stats-row" id="statsRow">
+  <div class="stat-card"><div class="stat-label">Total</div><div class="stat-value" id="statTotal">—</div></div>
+  <div class="stat-card"><div class="stat-label">Open</div><div class="stat-value" id="statOpen" style="color:var(--accent)">—</div></div>
+  <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value" id="statPending" style="color:#f59e0b">—</div></div>
+  <div class="stat-card"><div class="stat-label">Resolved</div><div class="stat-value" id="statResolved" style="color:#10b981">—</div></div>
+</div>
+
+<div class="card">
+  <div class="filters">
+    <button class="filter-btn active" onclick="setFilter(this,'all')">All</button>
+    <button class="filter-btn" onclick="setFilter(this,'open')">Open</button>
+    <button class="filter-btn" onclick="setFilter(this,'pending')">Pending</button>
+    <button class="filter-btn" onclick="setFilter(this,'resolved')">Resolved</button>
+  </div>
+  <table class="ticket-table">
+    <thead><tr>
+      <th>#</th><th>Subject</th><th>User</th><th>Category</th><th>Priority</th><th>Status</th><th>Date</th>
+    </tr></thead>
+    <tbody id="ticketBody"><tr><td colspan="7" style="color:var(--muted);padding:20px">Loading...</td></tr></tbody>
+  </table>
+</div>
+</main>
+</div>
+
+<!-- MODAL -->
+<div class="modal-overlay hidden" id="modalOverlay" onclick="closeModal(event)">
+  <div class="modal" id="modal">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
+      <div class="modal-title" id="modalTitle"></div>
+      <button class="btn btn-ghost" onclick="closeModalDirect()">✕</button>
+    </div>
+    <div class="modal-meta" id="modalMeta"></div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-actions" id="modalActions"></div>
+    <div class="messages-list" id="messagesList"></div>
+    <div class="reply-section">
+      <h4>Reply</h4>
+      <textarea class="reply-textarea" id="replyInput" placeholder="Write a reply..."></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-primary" onclick="sendReply()">Send reply</button>
+        <button class="btn btn-ghost" onclick="closeModalDirect()">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+  var c = document.getElementById("rsStarCanvas");
+  for (var i = 0; i < 60; i++) {
+    var s = document.createElement("div");
+    s.className = "rs-star-dot";
+    var sz = (Math.random()*1.4+0.3).toFixed(2);
+    var dur = (Math.random()*15+10).toFixed(1);
+    var delay = (Math.random()*-25).toFixed(1);
+    var op = (Math.random()*0.3+0.2).toFixed(2);
+    s.style.cssText = "left:"+(Math.random()*100).toFixed(2)+"%;top:0;width:"+sz+"px;height:"+sz+"px;background:rgba(255,255,255,"+op+");animation-duration:"+dur+"s;animation-delay:"+delay+"s";
+    c.appendChild(s);
+  }
+
+  fetch("/api/me", {credentials:"include"}).then(function(r){
+    if (!r.ok) { window.location.href = "/login"; return null; }
+    return r.json();
+  }).then(function(d) {
+    if (!d || !d.isAdmin) { window.location.href = "/"; return; }
+    loadTickets();
+    loadStats();
+  });
+});
+
+var allTickets = [];
+var currentFilter = "all";
+var currentTicket = null;
+
+function loadStats() {
+  fetch("/api/admin/support/stats", {credentials:"include"})
+    .then(function(r){return r.ok?r.json():null})
+    .then(function(d) {
+      if (!d) return;
+      document.getElementById("statTotal").textContent = d.total || 0;
+      document.getElementById("statOpen").textContent = d.open || 0;
+      document.getElementById("statPending").textContent = d.pending || 0;
+      document.getElementById("statResolved").textContent = d.resolved || 0;
+    });
+}
+
+function loadTickets() {
+  fetch("/api/admin/support/tickets", {credentials:"include"})
+    .then(function(r){return r.ok?r.json():[]})
+    .then(function(data) {
+      allTickets = Array.isArray(data) ? data : [];
+      renderTickets();
+    })
+    .catch(function() {
+      document.getElementById("ticketBody").innerHTML = "<tr><td colspan=7 style=color:var(--muted)>Could not load tickets.</td></tr>";
+    });
+}
+
+function renderTickets() {
+  var filtered = allTickets.filter(function(t) {
+    return currentFilter === "all" || t.status === currentFilter;
+  });
+  var tbody = document.getElementById("ticketBody");
+  if (!filtered.length) {
+    tbody.innerHTML = "<tr><td colspan=7 style='color:var(--muted);padding:20px'>No tickets.</td></tr>";
+    return;
+  }
+  tbody.innerHTML = filtered.map(function(t) {
+    var sc = t.status || "open";
+    var pc = (t.priority || "low").toLowerCase();
+    return "<tr onclick=\"openTicket("+t.id+")\">" +
+      "<td style=\"font-family:var(--font-mono);color:var(--muted)\">#"+t.id+"</td>" +
+      "<td style=\"font-weight:600\">"+esc(t.subject)+"</td>" +
+      "<td style=\"font-family:var(--font-mono)\">"+esc(t.username||"")+"</td>" +
+      "<td style=\"color:var(--muted)\">"+esc(t.category||"")+"</td>" +
+      "<td><span class=\"prio-badge "+pc+"\">"+pc+"</span></td>" +
+      "<td><span class=\"status-badge "+sc+"\">"+sc+"</span></td>" +
+      "<td style=\"color:var(--muted);font-family:var(--font-mono)\">"+fmtDate(t.createdAt)+"</td>" +
+      "</tr>";
+  }).join("");
+}
+
+function setFilter(btn, f) {
+  document.querySelectorAll(".filter-btn").forEach(function(b){b.classList.remove("active")});
+  btn.classList.add("active");
+  currentFilter = f;
+  renderTickets();
+}
+
+function openTicket(id) {
+  var t = allTickets.find(function(x){return x.id===id});
+  if (!t) return;
+  currentTicket = t;
+  document.getElementById("modalTitle").textContent = t.subject;
+  document.getElementById("modalMeta").textContent = "#"+t.id+" · "+t.username+" · "+t.category+" · "+(t.priority||"low")+" · "+fmtDate(t.createdAt);
+  document.getElementById("modalBody").textContent = t.description;
+
+  var actions = document.getElementById("modalActions");
+  actions.innerHTML =
+    "<button class=\"btn btn-success\" onclick=\"setStatus('resolved')\">Mark resolved</button>" +
+    "<button class=\"btn btn-warn\" onclick=\"setStatus('pending')\">Mark pending</button>" +
+    "<button class=\"btn btn-primary\" onclick=\"setStatus('open')\">Reopen</button>";
+
+  loadMessages(id);
+  document.getElementById("replyInput").value = "";
+  document.getElementById("modalOverlay").classList.remove("hidden");
+}
+
+function loadMessages(id) {
+  fetch("/api/admin/support/tickets/"+id, {credentials:"include"})
+    .then(function(r){return r.ok?r.json():null})
+    .then(function(d) {
+      var list = document.getElementById("messagesList");
+      var msgs = (d && d.messages) ? d.messages : [];
+      if (!msgs.length) { list.innerHTML = ""; return; }
+      list.innerHTML = msgs.map(function(m) {
+        var isAdmin = m.senderRole === "admin" || m.isAdmin;
+        return "<div class=\"msg\"><div class=\"msg-header\"><span class=\"msg-author"+(isAdmin?" admin":"")+"\">"+(isAdmin?"[Admin] ":"")+esc(m.senderUsername||"")+"</span><span class=\"msg-date\">"+fmtDate(m.createdAt)+"</span></div><div class=\"msg-body\">"+esc(m.message)+"</div></div>";
+      }).join("");
+    });
+}
+
+function sendReply() {
+  if (!currentTicket) return;
+  var msg = document.getElementById("replyInput").value.trim();
+  if (!msg) return;
+  fetch("/api/admin/support/tickets/"+currentTicket.id+"/reply", {
+    method:"POST", credentials:"include",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({message: msg})
+  }).then(function(r){
+    if (r.ok) {
+      showToast("Reply sent.", "success");
+      document.getElementById("replyInput").value = "";
+      loadMessages(currentTicket.id);
+    } else {
+      showToast("Could not send reply.", "error");
+    }
+  });
+}
+
+function setStatus(status) {
+  if (!currentTicket) return;
+  fetch("/api/admin/support/tickets/"+currentTicket.id+"/status", {
+    method:"POST", credentials:"include",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({status: status})
+  }).then(function(r){
+    if (r.ok) {
+      showToast("Status updated to "+status+".", "success");
+      currentTicket.status = status;
+      loadTickets();
+      loadStats();
+    } else {
+      showToast("Could not update status.", "error");
+    }
+  });
+}
+
+function closeModal(e) {
+  if (e.target === document.getElementById("modalOverlay")) closeModalDirect();
+}
+function closeModalDirect() {
+  document.getElementById("modalOverlay").classList.add("hidden");
+  currentTicket = null;
+}
+
+function showToast(msg, type) {
+  var t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className = "toast show "+(type||"success");
+  setTimeout(function(){ t.classList.remove("show"); }, 3500);
+}
+function esc(s){var d=document.createElement("div");d.textContent=s;return d.innerHTML}
+function fmtDate(v){if(!v)return"—";var d=new Date(v);return isNaN(d)?v:d.toLocaleDateString("en-GB",{year:"numeric",month:"short",day:"numeric"})}
+</script>
+</body></html>

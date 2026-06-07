@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script src="../theme.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Account | RunSpace</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0a0f1a">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body class="rs-page account-page">
+
+    <div class="account-shell">
+        <aside class="account-sidebar">
+            <a class="account-brand" href="/app">
+                <span class="brand-dot"></span>
+                <span>RunSpace</span>
+            </a>
+
+            <nav class="account-nav">
+                <button class="nav-item active" data-section="overview">Account</button>
+                <button class="nav-item" data-section="profile">Profile</button>
+                <button class="nav-item" data-section="security">Security</button>
+                <button class="nav-item" data-section="devices">Devices</button>
+                <button class="nav-item" data-section="privacy">Privacy</button>
+                <button class="nav-item" data-section="support">Support</button>
+                <button class="nav-item danger" data-section="danger">Danger zone</button>
+            </nav>
+
+            <a class="back-link" href="/app">Back to app</a>
+        </aside>
+
+        <main class="account-main">
+            <header class="account-header">
+                <div>
+                    <p class="eyebrow">Identity & security hub</p>
+                    <h1>Account settings</h1>
+                    <p class="muted">Control your identity, security, privacy and presence on RunSpace.</p>
+                </div>
+
+                <button id="logoutBtn" class="btn secondary">Log out</button>
+            </header>
+
+            <div id="notice" class="notice hidden"></div>
+
+            <section id="overview" class="settings-section active">
+                <div class="section-title">
+                    <h2>Account overview</h2>
+                    <p>Your public identity and current account state.</p>
+                </div>
+
+                <div class="account-grid">
+                    <article class="card profile-summary">
+                        <div class="avatar-wrap">
+                            <img id="avatarPreview" class="avatar" src="/icons/icon-180.png" alt="Profile avatar">
+                        </div>
+                        <div>
+                            <h3 id="displayNameText">Loading...</h3>
+                            <p id="usernameText" class="muted">@loading</p>
+                            <p id="bioText" class="small-muted">No bio added yet.</p>
+                        </div>
+                    </article>
+
+                    <article class="card">
+                        <h3>Trust level</h3>
+                        <div id="trustBadge" class="trust-badge">Unknown</div>
+                        <p id="trustText" class="muted">Trust helps RunSpace decide safe access limits without being noisy.</p>
+                    </article>
+
+                    <article class="card">
+                        <h3>Email status</h3>
+                        <div id="emailStatus" class="status-pill warning">Checking...</div>
+                        <p id="emailText" class="muted">Verify your email to improve account recovery and trust.</p>
+                    </article>
+
+                    <article class="card">
+                        <h3>Account created</h3>
+                        <p id="createdText" class="big-text">Unknown</p>
+                        <p class="muted">This helps calculate account maturity and trust.</p>
+                    </article>
+                </div>
+
+                <div class="health-grid">
+                    <article class="health-card" id="healthEmail">
+                        <strong>Email verified</strong>
+                        <span>Checking...</span>
+                    </article>
+                    <article class="health-card" id="health2fa">
+                        <strong>2FA enabled</strong>
+                        <span>Checking...</span>
+                    </article>
+                    <article class="health-card" id="healthDevice">
+                        <strong>Known device</strong>
+                        <span>Checking...</span>
+                    </article>
+                    <article class="health-card" id="healthSessions">
+                        <strong>Active sessions</strong>
+                        <span>Checking...</span>
+                    </article>
+                </div>
+            </section>
+
+            <section id="profile" class="settings-section">
+                <div class="section-title">
+                    <h2>Profile</h2>
+                    <p>Choose how you appear on RunSpace. Share only what you want.</p>
+                </div>
+
+                <div class="card form-card">
+                    <label>
+                        Display name
+                        <input id="displayNameInput" type="text" placeholder="Your display name">
+                    </label>
+
+                    <label>
+                        Bio / status
+                        <textarea id="bioInput" rows="4" placeholder="Write something short about yourself"></textarea>
+                    </label>
+
+                    <button id="saveProfileBtn" class="btn primary">Save profile</button>
+                </div>
+
+                <div class="card form-card">
+                    <h3>Change username</h3>
+                    <p class="muted">Your username is your searchable identity on RunSpace.</p>
+                    <label>
+                        New username
+                        <input id="usernameInput" type="text" placeholder="new_username">
+                    </label>
+                    <button id="changeUsernameBtn" class="btn secondary">Change username</button>
+                </div>
+
+                <div class="card form-card">
+                    <h3>Avatar & banner</h3>
+
+                    <label>
+                        Profile picture
+                        <input id="avatarInput" type="file" accept="image/*">
+                    </label>
+                    <button id="uploadAvatarBtn" class="btn secondary">Upload avatar</button>
+
+                    <label>
+                        Profile banner
+                        <input id="bannerInput" type="file" accept="image/*">
+                    </label>
+                    <button id="uploadBannerBtn" class="btn secondary">Upload banner</button>
+                </div>
+            </section>
+
+            <section id="security" class="settings-section">
+                <div class="section-title">
+                    <h2>Security</h2>
+                    <p>Protect your account with stronger login controls.</p>
+                </div>
+
+                <div class="card form-card">
+                    <h3>Change password</h3>
+                    <label>
+                        Current password
+                        <input id="currentPassword" type="password" autocomplete="current-password">
+                    </label>
+                    <label>
+                        New password
+                        <input id="newPassword" type="password" autocomplete="new-password">
+                    </label>
+                    <button id="changePasswordBtn" class="btn primary">Update password</button>
+                </div>
+
+                <div class="card form-card">
+                    <h3>Two-factor authentication</h3>
+                    <p id="twoFactorText" class="muted">Add an extra checkpoint before anyone enters your account.</p>
+                    <div class="button-row">
+                        <button id="setup2faBtn" class="btn secondary">Set up 2FA</button>
+                        <button id="disable2faBtn" class="btn danger">Disable 2FA</button>
+                    </div>
+
+                    <div id="twoFactorVerifyBox" class="hidden">
+                        <label>
+                            2FA code
+                            <input id="twoFactorCode" type="text" inputmode="numeric" placeholder="123456">
+                        </label>
+                        <button id="verify2faBtn" class="btn primary">Verify 2FA</button>
+                    </div>
+                </div>
+
+                <div class="card form-card">
+                    <h3>Email verification</h3>
+                    <p class="muted">Verify your email to improve recovery and trust.</p>
+                    <div class="button-row">
+                        <button id="sendEmailCodeBtn" class="btn secondary">Send code</button>
+                    </div>
+                    <label>
+                        Verification code
+                        <input id="emailCodeInput" type="text" placeholder="Enter code">
+                    </label>
+                    <button id="verifyEmailBtn" class="btn primary">Verify email</button>
+                </div>
+            </section>
+
+            <section id="devices" class="settings-section">
+                <div class="section-title">
+                    <h2>Devices & sessions</h2>
+                    <p>See where your account is active and remove unknown access.</p>
+                </div>
+
+                <div class="card">
+                    <div class="card-header-row">
+                        <h3>Active sessions</h3>
+                        <button id="refreshSessionsBtn" class="btn secondary small">Refresh</button>
+                    </div>
+                    <div id="sessionsList" class="list-stack">Loading sessions...</div>
+                </div>
+
+                <div class="card">
+                    <h3>Login history</h3>
+                    <div id="loginHistoryList" class="list-stack">Loading history...</div>
+                </div>
+
+                <div class="card">
+                    <h3>Encryption device keys</h3>
+                    <p class="muted">Old or unknown device keys can be removed here.</p>
+                    <div id="deviceKeysList" class="list-stack">Loading device keys...</div>
+                </div>
+            </section>
+
+            <section id="privacy" class="settings-section">
+                <div class="section-title">
+                    <h2>Privacy</h2>
+                    <p>Privacy controls should feel like switches, not legal paperwork.</p>
+                </div>
+
+                <div class="card form-card">
+                    <h3>Visibility preferences</h3>
+
+                    <label class="toggle-row">
+                        <span>Allow people to find me in search</span>
+                        <input id="privacySearch" type="checkbox">
+                    </label>
+
+                    <label class="toggle-row">
+                        <span>Show online status</span>
+                        <input id="privacyOnline" type="checkbox">
+                    </label>
+
+                    <label class="toggle-row">
+                        <span>Send read receipts</span>
+                        <input id="privacyReadReceipts" type="checkbox">
+                    </label>
+
+                    <label class="toggle-row">
+                        <span>Allow DMs from non-friends</span>
+                        <input id="privacyDms" type="checkbox">
+                    </label>
+
+                    <button id="savePrivacyBtn" class="btn primary">Save privacy settings</button>
+                    <p class="small-muted">Note: these controls need backend endpoints before they can persist.</p>
+                </div>
+            </section>
+
+            <section id="support" class="settings-section">
+                <div class="section-title">
+                    <h2>Support</h2>
+                    <p>Get help or review your previous tickets.</p>
+                </div>
+
+                <div class="card form-card">
+                    <h3>Create support ticket</h3>
+                    <label>
+                        Subject
+                        <input id="ticketSubject" type="text" placeholder="What is wrong?">
+                    </label>
+                    <label>
+                        Message
+                        <textarea id="ticketMessage" rows="5" placeholder="Describe the issue"></textarea>
+                    </label>
+                    <button id="createTicketBtn" class="btn primary">Create ticket</button>
+                </div>
+
+                <div class="card">
+                    <h3>My tickets</h3>
+                    <div id="ticketsList" class="list-stack">Loading tickets...</div>
+                </div>
+            </section>
+
+            <section id="danger" class="settings-section">
+                <div class="section-title">
+                    <h2>Danger zone</h2>
+                    <p>Serious account actions. Use carefully.</p>
+                </div>
+
+                <div class="card danger-card">
+                    <h3>Log out everywhere</h3>
+                    <p class="muted">Ends active sessions on other devices.</p>
+                    <button id="logoutAllBtn" class="btn danger">Log out all devices</button>
+                </div>
+
+                <div class="card danger-card">
+                    <h3>Freeze account</h3>
+                    <p class="muted">Temporarily locks down your account if you think someone else has access.</p>
+                    <button id="freezeBtn" class="btn danger">Freeze my account</button>
+                </div>
+            </section>
+        </main>
+    </div>
+
+<script>
+const state = {
+    me: null,
+    profile: null,
+    csrf: null
+};
+
+const $ = (id) => document.getElementById(id);
+
+function showNotice(message, type = "info") {
+    const box = $("notice");
+    box.textContent = message;
+    box.className = `notice ${type}`;
+    setTimeout(() => box.classList.add("hidden"), 5000);
+}
+
+async function api(url, options = {}) {
+    const headers = options.headers || {};
+    const isForm = options.body instanceof FormData;
+
+    if (!isForm) headers["Content-Type"] = "application/json";
+
+    if (state.csrf) headers["X-CSRF-Token"] = state.csrf;
+
+    const res = await fetch(url, {
+        credentials: "include",
+        ...options,
+        headers
+    });
+
+    let data = null;
+    try {
+        data = await res.json();
+    } catch {}
+
+    if (!res.ok) {
+        throw new Error(data?.error || data?.message || `Request failed: ${res.status}`);
+    }
+
+    return data;
+}
+
+async function loadCsrf() {
+    try {
+        const data = await fetch("/api/auth/csrf", { credentials: "include" }).then(r => r.json());
+        state.csrf = data.csrf || data.token || data.csrfToken || null;
+    } catch {}
+}
+
+function safeText(value, fallback = "Unknown") {
+    return value === null || value === undefined || value === "" ? fallback : value;
+}
+
+function formatDate(value) {
+    if (!value) return "Unknown";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+}
+
+function setHealth(id, ok, text) {
+    const el = $(id);
+    el.classList.remove("ok", "warn", "bad");
+    el.classList.add(ok === true ? "ok" : ok === false ? "warn" : "bad");
+    el.querySelector("span").textContent = text;
+}
+
+function getTrustLevel(user) {
+    return user?.trustLevel || user?.TrustLevel || user?.trust_level || "Unknown";
+}
+
+function getTrustScore(user) {
+    return user?.trustScore || user?.TrustScore || user?.trust_score || null;
+}
+
+function renderOverview() {
+    const me = state.me || {};
+    const profile = state.profile || {};
+
+    const username = me.username || me.Username || profile.username || profile.Username;
+    const displayName = profile.displayName || profile.DisplayName || me.displayName || me.DisplayName || username;
+    const bio = profile.bio || profile.Bio || profile.status || profile.Status;
+    const avatar = profile.avatarUrl || profile.AvatarUrl || me.avatarUrl || me.AvatarUrl;
+
+    $("displayNameText").textContent = safeText(displayName, "RunSpace user");
+    $("usernameText").textContent = username ? `@${username}` : "@unknown";
+    $("bioText").textContent = safeText(bio, "No bio added yet.");
+
+    if (avatar) $("avatarPreview").src = avatar;
+
+    const emailVerified = me.emailVerified ?? me.EmailVerified ?? false;
+    $("emailStatus").textContent = emailVerified ? "Verified" : "Not verified";
+    $("emailStatus").className = emailVerified ? "status-pill ok" : "status-pill warning";
+
+    const created = me.createdAt || me.CreatedAt || me.accountCreated || me.AccountCreated;
+    $("createdText").textContent = formatDate(created);
+
+    const trustLevel = getTrustLevel(me);
+    const trustScore = getTrustScore(me);
+    $("trustBadge").textContent = trustScore ? `${trustLevel} (${trustScore}/100)` : trustLevel;
+    $("trustText").textContent = trustLevel === "Unknown"
+        ? "Trust details are not available yet."
+        : "Your trust level affects safe limits like uploads, links and rate limits.";
+
+    $("displayNameInput").value = displayName || "";
+    $("bioInput").value = bio || "";
+    $("usernameInput").value = username || "";
+
+    setHealth("healthEmail", emailVerified, emailVerified ? "Verified" : "Needs verification");
+
+    const twoFactor = me.twoFactorEnabled ?? me.TwoFactorEnabled ?? me.has2fa ?? me.Has2FA ?? false;
+    setHealth("health2fa", twoFactor, twoFactor ? "Enabled" : "Not enabled");
+    $("twoFactorText").textContent = twoFactor ? "2FA is active on this account." : "2FA is not enabled yet.";
+}
+
+async function loadMe() {
+    try {
+        state.me = await api("/api/me");
+    } catch (err) {
+        showNotice("Could not load /api/me. You may need to log in again.", "error");
+    }
+
+    try {
+        state.profile = await api("/api/profile");
+    } catch {}
+
+    renderOverview();
+}
+
+async function loadDeviceStatus() {
+    try {
+        const data = await api("/api/auth/device-status");
+        const known = data.known ?? data.isKnown ?? data.KnownDevice ?? data.knownDevice;
+        setHealth("healthDevice", known === true, known ? "Known device" : "New or unknown");
+    } catch {
+        setHealth("healthDevice", null, "Unavailable");
+    }
+}
+
+async function loadSessions() {
+    try {
+        let data;
+        try {
+            data = await api("/api/auth/active-sessions");
+        } catch {
+            data = await api("/api/auth/sessions");
+        }
+
+        const sessions = Array.isArray(data) ? data : (data.sessions || data.activeSessions || []);
+        setHealth("healthSessions", true, `${sessions.length} active`);
+
+        if (!sessions.length) {
+            $("sessionsList").textContent = "No active sessions found.";
+            return;
+        }
+
+        $("sessionsList").innerHTML = sessions.map(s => {
+            const id = s.sessionId || s.id || s.SessionId || "";
+            const device = s.deviceName || s.DeviceName || s.device || "Unknown device";
+            const ip = s.ip || s.Ip || s.ipAddress || "Unknown IP";
+            const last = formatDate(s.lastActive || s.LastActive || s.createdAt || s.CreatedAt);
+
+            return `
+                <div class="list-item">
+                    <div>
+                        <strong>${device}</strong>
+                        <p class="muted">${ip} · Last active: ${last}</p>
+                    </div>
+                    ${id ? `<button class="btn danger small" onclick="revokeSession('${id}')">Revoke</button>` : ""}
+                </div>
+            `;
+        }).join("");
+    } catch {
+        $("sessionsList").textContent = "Could not load sessions.";
+        setHealth("healthSessions", null, "Unavailable");
+    }
+}
+
+async function loadLoginHistory() {
+    try {
+        const data = await api("/api/auth/login-history");
+        const items = Array.isArray(data) ? data : (data.history || data.logins || []);
+
+        if (!items.length) {
+            $("loginHistoryList").textContent = "No login history found.";
+            return;
+        }
+
+        $("loginHistoryList").innerHTML = items.slice(0, 10).map(item => {
+            const device = item.deviceName || item.DeviceName || item.device || "Unknown device";
+            const ip = item.ip || item.Ip || item.ipAddress || "Unknown IP";
+            const time = formatDate(item.time || item.createdAt || item.CreatedAt || item.loginAt);
+
+            return `
+                <div class="list-item">
+                    <div>
+                        <strong>${device}</strong>
+                        <p class="muted">${ip} · ${time}</p>
+                    </div>
+                </div>
+            `;
+        }).join("");
+    } catch {
+        $("loginHistoryList").textContent = "Could not load login history.";
+    }
+}
+
+async function loadDeviceKeys() {
+    try {
+        const data = await api("/api/chat/device-keys/me");
+        const keys = Array.isArray(data) ? data : (data.keys || data.deviceKeys || []);
+
+        if (!keys.length) {
+            $("deviceKeysList").textContent = "No device keys found.";
+            return;
+        }
+
+        $("deviceKeysList").innerHTML = keys.map(k => {
+            const id = k.deviceId || k.DeviceId || k.id || "";
+            const name = k.deviceName || k.DeviceName || id || "Unknown device";
+            const created = formatDate(k.createdAt || k.CreatedAt);
+
+            return `
+                <div class="list-item">
+                    <div>
+                        <strong>${name}</strong>
+                        <p class="muted">Created: ${created}</p>
+                    </div>
+                    ${id ? `<button class="btn danger small" onclick="deleteDeviceKey('${id}')">Remove</button>` : ""}
+                </div>
+            `;
+        }).join("");
+    } catch {
+        $("deviceKeysList").textContent = "Could not load device keys.";
+    }
+}
+
+async function loadTickets() {
+    try {
+        const data = await api("/api/support/my-tickets");
+        const tickets = Array.isArray(data) ? data : (data.tickets || []);
+
+        if (!tickets.length) {
+            $("ticketsList").textContent = "No tickets yet.";
+            return;
+        }
+
+        $("ticketsList").innerHTML = tickets.map(t => {
+            const title = t.subject || t.Subject || "Support ticket";
+            const status = t.status || t.Status || "Open";
+            const time = formatDate(t.createdAt || t.CreatedAt);
+
+            return `
+                <div class="list-item">
+                    <div>
+                        <strong>${title}</strong>
+                        <p class="muted">${status} · ${time}</p>
+                    </div>
+                </div>
+            `;
+        }).join("");
+    } catch {
+        $("ticketsList").textContent = "Could not load tickets.";
+    }
+}
+
+async function revokeSession(id) {
+    if (!confirm("Revoke this session?")) return;
+
+    try {
+        await api(`/api/auth/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+        showNotice("Session revoked.", "success");
+        loadSessions();
+    } catch (err) {
+        showNotice(err.message, "error");
+    }
+}
+
+async function deleteDeviceKey(id) {
+    if (!confirm("Remove this device key?")) return;
+
+    try {
+        await api(`/api/chat/device-key/${encodeURIComponent(id)}`, { method: "DELETE" });
+        showNotice("Device key removed.", "success");
+        loadDeviceKeys();
+    } catch (err) {
+        showNotice(err.message, "error");
+    }
+}
+
+function bindNavigation() {
+    document.querySelectorAll(".nav-item").forEach(btn => {
+        btn.addEventListener("click", () => {
+            document.querySelectorAll(".nav-item").forEach(x => x.classList.remove("active"));
+            document.querySelectorAll(".settings-section").forEach(x => x.classList.remove("active"));
+
+            btn.classList.add("active");
+            $(btn.dataset.section).classList.add("active");
+        });
+    });
+}
+
+function bindActions() {
+    $("saveProfileBtn").addEventListener("click", async () => {
+        try {
+            await api("/api/profile/update", {
+                method: "POST",
+                body: JSON.stringify({
+                    displayName: $("displayNameInput").value.trim(),
+                    bio: $("bioInput").value.trim()
+                })
+            });
+            showNotice("Profile saved.", "success");
+            loadMe();
+        } catch (err) {
+            showNotice(err.message, "error");
+        }
+    });
+
+    $("changeUsernameBtn").addEventListener("click", async () => {
+        try {
+            await api("/api/auth/change-username", {
+                method: "POST",
+                body: JSON.stringify({
+                    username: $("usernameInput").value.trim(),
+                    newUsername: $("usernameInput").value.trim()
+                })
+            });
+            showNotice("Username updated.", "success");
+            loadMe();
+        } catch (err) {
+            showNotice(err.message, "error");
+        }
+    });
+
+    $("uploadAvatarBtn").addEventListener("click", async () => {
+        const file = $("avatarInput").files[0];
+        if (!file) return showNotice("Choose an avatar first.", "error");
+
+        const form = new FormData();
+        form.append("file", file);
+
+        try {
+            await api("/api/profile/avatar/upload", { method: "POST", body: form });
+            showNotice("Avatar uploaded.", "success");
+            loadMe();
+        } catch (err) {
+            showNotice(err.message, "error");
+        }
+    });
+
+    $("uploadBannerBtn").addEventListener("click", async () => {
+        const file = $("bannerInput").files[0];
+        if (!file) return showNotice("Choose a banner first.", "error");
+
+        const form = new FormData();
+        form.append("file", file);
+
+        try {
+            await api("/api/profile/banner/upload", { method: "POST", body: form });
+            showNotice("Banner uploaded.", "success");
+        } catch (err) {
+            showNotice(err.message, "error");
+        }
+    });
+
+    $("changePasswordBtn").addEventListener("click", async () => {
+        try {
+            await api("/api/auth/change-password", {
+                method: "POST",
+                body: JSON.stringify({
+                    currentPassword: $("currentPassword").value,
+                    oldPassword: $("currentPassword").value,
+                    newPassword: $("newPassword").value
+                })
+            });
+            $("currentPassword").value = "";
+            $("newPassword").value = "";
+            showNotice("Password changed.", "success");
+        } catch (err) {
+            showNotice(err.message, "error");
+        }
+    });
+
+    $("setup2faBtn").addEventListener("click", async () => {
+        try {
+            const data = await api("/api/auth/2fa/setup", { method: "POST", body: JSON.stringify({}) });
+            $("twoFactorVerifyBox").classList.remove("hidden");
+            showNotice(data.secret ? `2FA setup started. Secret: ${data.secret}` : "2FA setup started.", "success");
+        } catch (err) {
+            showNotice(err.message, "error");
+        }
+    });
+
+    $("verify2faBtn").addEventListener("click", async () => {
+        try {
+            await api("/api/auth/2fa/verify", {
+                method: "POST",
+                body: JSON.stringify({
+                    code: $("twoFactorCode").value.trim()
+                })
+            });
+            showNotice("2FA enabled.", "success");
+            loadMe();
+        } catch (err) {
+            showNotice(err.message, "error");
+        }
+    });
+
+    $("disable2faBtn").addEventListener("click", async () => {
+        if (!confirm("Disable 2FA?")) return;
+
+        try {
+            await api("/api/auth/2fa/disable", { method: "POST", body: JSON.stringify({}) });
+            showNotice("2FA disabled.", "success");
+            loadMe();
+        } catch (err) {
+            showNotice(err.message, "error");
+        }
+    });
+
+    $("sendEmailCodeBtn").addEventListener("click", async () => {
+        try {
+            await api("/api/auth/email/send-code", { method: "POST", body: JSON.stringify({}) });
+            showNotice("Verification code sent.", "success");
+        } catch (err) {
+            showNotice(err.message, "error");
+        }
+    });
+
+    $("verifyEmailBtn").addEventListener("click", async () => {
+        try {
+            await api("/api/auth/email/verify", {
+                method: "POST",
+                body: JSON.stringify({
+                    code: $("emailCodeInput").value.trim()
+                })
+            });
+            showNotice("Email verified.", "success");
+            loadMe();
+        } catch (err) {
+            showNotice(err.message, "error");
+        }
+    });
+
+    $("createTicketBtn").addEventListener("click", async () => {
+        try {
+            await api("/api/support/ticket", {
+                method: "POST",
+                body: JSON.stringify({
+                    subject: $("ticketSubject").value.trim(),
+                    message: $("ticketMessage").value.trim()
+                })
+            });
+            $("ticketSubject").value = "";
+            $("ticketMessage").value = "";
+            showNotice("Ticket created.", "success");
+            loadTickets();
+        } catch (err) {
+            showNotice(err.message, "error");
+        }
+    });
+
+    $("refreshSessionsBtn").addEventListener("click", loadSessions);
+
+    $("logoutBtn").addEventListener("click", async () => {
+        try {
+            await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) });
+            location.href = "/login";
+        } catch {
+            location.href = "/login";
+        }
+    });
+
+    $("logoutAllBtn").addEventListener("click", async () => {
+        if (!confirm("Log out all devices?")) return;
+
+        try {
+            await api("/api/auth/logout-all-devices", { method: "POST", body: JSON.stringify({}) });
+            showNotice("Logged out all devices.", "success");
+        } catch (err) {
+            showNotice(err.message, "error");
+        }
+    });
+
+    $("freezeBtn").addEventListener("click", async () => {
+        if (!confirm("Freeze your account?")) return;
+
+        try {
+            await api("/api/auth/freeze", { method: "POST", body: JSON.stringify({}) });
+            showNotice("Account freeze requested.", "success");
+        } catch (err) {
+            showNotice(err.message, "error");
+        }
+    });
+
+    $("savePrivacyBtn").addEventListener("click", () => {
+        showNotice("Privacy preferences UI is ready, but backend save endpoint is not connected yet.", "info");
+    });
+}
+
+async function init() {
+    bindNavigation();
+    bindActions();
+
+    await loadCsrf();
+    await loadMe();
+
+    loadDeviceStatus();
+    loadSessions();
+    loadLoginHistory();
+    loadDeviceKeys();
+    loadTickets();
+}
+
+init();
+</script>
+</body>
+</html>

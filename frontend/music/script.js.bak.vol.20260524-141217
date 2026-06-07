@@ -1,0 +1,658 @@
+/* RunSpace Music — script.js v11
+ * Ändringar från v10:
+ *  - YouTube spelas via youtube-nocookie embed (ingen server-API)
+ *    → bakgrundsljud + låsskärm fungerar på Android och iOS
+ *  - YouTube IFrame API borttagen (behövs inte längre)
+ *  - resumePlayback hanterar nu korrekt <audio>-baserat YouTube
+ */
+
+window.addEventListener('unhandledrejection', e => {
+  if (e.reason && (e.reason.code === 403 || e.reason.httpStatus === 200)) {
+    e.preventDefault();
+  }
+});
+
+// ── State ──────────────────────────────────────────────
+const DB_NAME = 'runspace-music', DB_VER = 2;
+let db, playlists = [], tracks = [], activePlaylistId = null;
+let currentIdx = -1, isPlaying = false;
+const RECENT_KEY   = 'rs_music_recent';
+const SETTINGS_KEY = 'rs_music_settings';
+const VOL_KEY      = 'rs_music_volume';
+
+// ── Helpers ────────────────────────────────────────────
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const esc = s => String(s || '').replace(/[&<>"']/g, m =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m]));
+const fmtTime = s => {
+  s = Math.floor(s || 0);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+const getSettings = () => {
+  try { return { ...{ username: '', accent: '#4f9cf9' }, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; }
+  catch { return { username: '', accent: '#4f9cf9' }; }
+};
+const saveSettings = s => localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+const getRecent = () => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]'); } catch { return []; } };
+const getSavedVolume = () => { const v = localStorage.getItem(VOL_KEY); return v !== null ? Number(v) : 80; };
+const saveVolume = v => localStorage.setItem(VOL_KEY, String(v));
+
+function toast(msg, icon = '♪') {
+  const c = $('#toasts');
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.innerHTML = `<span class="toast-icon">${icon}</span><span>${esc(msg)}</span>`;
+  c.appendChild(t);
+  setTimeout(() => t.remove(), 3200);
+}
+
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 5)  return 'Good night';
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+// ── Silent audio wake-lock ─────────────────────────────
+// En tyst WAV loopad i bakgrunden håller webbläsarens
+// Audio Session vid liv när skärmen låses.
+const SILENT_WAV =
+  'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABk' +
+  'YXRhAgAAAAEA';
+
+let _silentAudio = null;
+
+function startWakeLock() {
+  if (_silentAudio) return;
+  try {
+    _silentAudio = new Audio(SILENT_WAV);
+    _silentAudio.loop   = true;
+    _silentAudio.volume = 0.001;
+    _silentAudio.play().catch(() => { _silentAudio = null; });
+  } catch {
+    _silentAudio = null;
+  }
+}
+
+// ── Media Session API ──────────────────────────────────
+function setupMediaSession(t) {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title:  t?.title  || 'RunSpace Music',
+    artist: t?.artist || '',
+    album:  'RunSpace',
+    artwork: t?.thumb
+      ? [{ src: t.thumb, sizes: '300x300', type: 'image/jpeg' },
+         { src: t.thumb, sizes: '512x512', type: 'image/jpeg' }]
+      : []
+  });
+  navigator.mediaSession.setActionHandler('play',          () => resumePlayback());
+  navigator.mediaSession.setActionHandler('pause',         () => pausePlayback());
+  navigator.mediaSession.setActionHandler('nexttrack',     () => playNext());
+  navigator.mediaSession.setActionHandler('previoustrack', () => playPrev());
+  navigator.mediaSession.setActionHandler('seekto', e => {
+    if (window._currentAudio) window._currentAudio.currentTime = e.seekTime;
+  });
+}
+
+function updateMediaSessionState(playing) {
+  if (!('mediaSession' in navigator)) return;
+  navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+}
+
+function updateMediaSessionPosition(cur, dur) {
+  if (!('mediaSession' in navigator) || !dur) return;
+  try {
+    navigator.mediaSession.setPositionState({
+      duration: dur, playbackRate: 1, position: Math.min(cur, dur)
+    });
+  } catch {}
+}
+
+// ── IndexedDB ──────────────────────────────────────────
+function openDB() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains('tracks'))
+        d.createObjectStore('tracks',    { keyPath: 'id', autoIncrement: true });
+      if (!d.objectStoreNames.contains('playlists'))
+        d.createObjectStore('playlists', { keyPath: 'id', autoIncrement: true });
+    };
+    req.onsuccess = e => { db = e.target.result; res(db); };
+    req.onerror   = () => rej(req.error);
+  });
+}
+
+const dbGetAll = store => new Promise((res, rej) => {
+  const tx  = db.transaction(store, 'readonly');
+  const req = tx.objectStore(store).getAll();
+  req.onsuccess = () => res(req.result);
+  req.onerror   = () => rej(req.error);
+});
+
+const dbAdd = (store, obj) => new Promise((res, rej) => {
+  const tx  = db.transaction(store, 'readwrite');
+  const req = tx.objectStore(store).add(obj);
+  req.onsuccess = () => { obj.id = req.result; res(obj); };
+  req.onerror   = () => rej(req.error);
+});
+
+const dbPut = (store, obj) => new Promise((res, rej) => {
+  const tx = db.transaction(store, 'readwrite');
+  tx.objectStore(store).put(obj);
+  tx.oncomplete = () => res(obj);
+  tx.onerror    = () => rej(tx.error);
+});
+
+const dbDelete = (store, id) => new Promise((res, rej) => {
+  const tx = db.transaction(store, 'readwrite');
+  tx.objectStore(store).delete(id);
+  tx.oncomplete = () => res();
+  tx.onerror    = () => rej(tx.error);
+});
+
+// ── URL-parsers ────────────────────────────────────────
+function parseYouTubeId(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes('youtu.be'))
+      return u.pathname.split('/').filter(Boolean)[0] || null;
+    if (u.hostname.includes('youtube.com')) {
+      if (u.searchParams.get('v')) return u.searchParams.get('v');
+      const parts = u.pathname.split('/').filter(Boolean);
+      if (['shorts', 'embed', 'live'].includes(parts[0]) && parts[1]) return parts[1];
+    }
+  } catch {}
+  const m = String(url).match(/(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([a-zA-Z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+function parseSpotify(url) {
+  const m = url.match(/spotify\.com\/(track|playlist|album|episode)\/([\w]+)/);
+  if (!m) return null;
+  return `https://open.spotify.com/embed/${m[1]}/${m[2]}?utm_source=generator&theme=0`;
+}
+
+async function fetchYtTitle(videoId) {
+  try {
+    const r = await fetch(
+      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&format=json`
+    );
+    if (!r.ok) throw 0;
+    const d = await r.json();
+    return d.title || 'YouTube – ' + videoId;
+  } catch {
+    return 'YouTube – ' + videoId;
+  }
+}
+
+// ── Sidebar ────────────────────────────────────────────
+function renderSidebar() {
+  const list = $('#playlist-list');
+  list.innerHTML = '';
+  playlists.forEach(p => {
+    const li = document.createElement('li');
+    li.className = 'nav-item' + (p.id === activePlaylistId ? ' active' : '');
+    li.innerHTML =
+      `<div class="nav-item-inner">` +
+        `<span class="nav-item-icon">≡</span>` +
+        `<span class="nav-item-name">${esc(p.name)}</span>` +
+      `</div>` +
+      `<span class="nav-item-count">${p.id === activePlaylistId ? tracks.length : ''}</span>`;
+    li.onclick = () => { activePlaylistId = p.id; renderSidebar(); loadTracks(); };
+    list.appendChild(li);
+  });
+  const active = playlists.find(p => p.id === activePlaylistId);
+  if (active) $('#active-playlist-name').textContent = active.name;
+}
+
+// ── Track table ────────────────────────────────────────
+function renderTracks() {
+  const tbody = $('#track-tbody');
+  tbody.innerHTML = '';
+
+  if (!tracks.length) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td colspan="5" class="table-empty">Klistra in en YouTube- eller Spotify-länk i sökfältet och tryck Enter</td>`;
+    tbody.appendChild(tr);
+    $('#playlist-count').textContent = '0 tracks';
+    renderRecent();
+    return;
+  }
+
+  tracks.forEach((t, i) => {
+    const tr = document.createElement('tr');
+    if (i === currentIdx) tr.classList.add('playing');
+    tr.dataset.idx = i;
+
+    const thumbHtml = t.thumb
+      ? `<img src="${esc(t.thumb)}" alt="">`
+      : `<span>${t.type === 'youtube' ? '▶' : t.type === 'spotify' ? '●' : '◆'}</span>`;
+
+    const pillClass = t.type === 'youtube' ? 'yt' : t.type === 'spotify' ? 'sp' : 'lo';
+    const pillLabel = t.type === 'youtube' ? 'YouTube' : t.type === 'spotify' ? 'Spotify' : 'Local';
+
+    tr.innerHTML =
+      `<td class="td-num"><span class="num">${i + 1}</span></td>` +
+      `<td class="td-title">` +
+        `<div class="title-cell">` +
+          `<div class="title-thumb">${thumbHtml}</div>` +
+          `<div class="title-info">` +
+            `<div class="title-main">${esc(t.title || 'Unknown')}</div>` +
+            `<span class="source-pill ${pillClass}">${pillLabel}</span>` +
+          `</div>` +
+        `</div>` +
+      `</td>` +
+      `<td>${esc(t.artist || '—')}</td>` +
+      `<td class="td-dur">${esc(t.length || '—')}</td>` +
+      `<td class="td-more"><button class="more-btn" data-idx="${i}">⋯</button></td>`;
+
+    tr.addEventListener('click', e => {
+      if (e.target.closest('.more-btn')) return;
+      playTrack(i);
+    });
+
+    tr.querySelector('.more-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      if (confirm(`Ta bort "${t.title || 'denna låt'}"?`)) {
+        dbDelete('tracks', t.id).then(() => {
+          tracks.splice(i, 1);
+          if (currentIdx >= i) currentIdx--;
+          renderTracks();
+          renderSidebar();
+        });
+      }
+    });
+
+    tbody.appendChild(tr);
+  });
+
+  $('#playlist-count').textContent = `${tracks.length} track${tracks.length !== 1 ? 's' : ''}`;
+  renderRecent();
+}
+
+// ── Recently played ────────────────────────────────────
+function renderRecent() {
+  const row = $('#recent-row');
+  row.innerHTML = '';
+  const recent = getRecent();
+
+  if (!recent.length) {
+    const e = document.createElement('div');
+    e.className = 'empty-card';
+    e.textContent = 'Inget har spelats än — starta en låt!';
+    row.appendChild(e);
+    return;
+  }
+
+  recent.slice(0, 10).forEach(t => {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'music-card';
+    const artContent = t.thumb
+      ? `<img src="${esc(t.thumb)}" alt="">`
+      : `<span class="card-art-icon">${t.type === 'youtube' ? '▶' : t.type === 'spotify' ? '●' : '◆'}</span>`;
+    card.innerHTML =
+      `<div class="card-art">` +
+        artContent +
+        `<div class="card-art-overlay"><div class="card-art-overlay-icon">▶</div></div>` +
+      `</div>` +
+      `<div class="card-name">${esc(t.title || 'Unknown')}</div>` +
+      `<div class="card-sub">${t.type === 'youtube' ? 'YouTube' : t.type === 'spotify' ? 'Spotify' : 'Local'}</div>`;
+
+    card.addEventListener('click', () => {
+      const idx = tracks.findIndex(x =>
+        String(x.id) === String(t.id) ||
+        (t.videoId && x.videoId === t.videoId) ||
+        x.title === t.title
+      );
+      if (idx >= 0) playTrack(idx);
+    });
+
+    row.appendChild(card);
+  });
+}
+
+// ── Now playing ────────────────────────────────────────
+function updateNowPlaying(t) {
+  $('#now-title').textContent  = t?.title  || 'No track loaded';
+  $('#now-artist').textContent = t?.type
+    ? (t.type === 'youtube' ? 'YouTube' : t.type === 'spotify' ? 'Spotify' : 'Local')
+    : '—';
+  const thumb = $('#now-thumb');
+  if (t?.thumb) {
+    thumb.innerHTML = `<img src="${esc(t.thumb)}" alt="">`;
+  } else {
+    thumb.textContent = t ? (t.type === 'youtube' ? '▶' : t.type === 'spotify' ? '●' : '◆') : '♪';
+  }
+}
+
+// ── Progress ───────────────────────────────────────────
+function setProgress(cur, dur) {
+  if (dur > 0) $('#progress-fill').style.width = (cur / dur * 100) + '%';
+  $('#time-cur').textContent   = fmtTime(cur);
+  $('#time-total').textContent = fmtTime(dur);
+  updateMediaSessionPosition(cur, dur);
+}
+
+function startAudioProgress(audio) {
+  clearInterval(window._progressTimer);
+  window._progressTimer = setInterval(() => {
+    if (!audio.duration) return;
+    setProgress(audio.currentTime, audio.duration);
+  }, 500);
+}
+
+// ── Playback helpers ───────────────────────────────────
+function getVolume() {
+  const slider = $('#vol-slider');
+  return slider ? Number(slider.value) : getSavedVolume();
+}
+
+function pausePlayback() {
+  if (window._currentAudio) window._currentAudio.pause();
+  clearInterval(window._progressTimer);
+  isPlaying = false;
+  $('#btn-play').textContent = '▶';
+  updateMediaSessionState(false);
+}
+
+function resumePlayback() {
+  if (currentIdx === -1) return;
+  if (window._currentAudio) {
+    window._currentAudio.play().catch(() => {});
+    startAudioProgress(window._currentAudio);
+  }
+  isPlaying = true;
+  $('#btn-play').textContent = '⏸';
+  updateMediaSessionState(true);
+}
+
+function stopAll() {
+  if (window._currentAudio) {
+    window._currentAudio.pause();
+    window._currentAudio.src = '';
+    window._currentAudio = null;
+  }
+  clearInterval(window._progressTimer);
+  $('#progress-fill').style.width = '0%';
+  $('#time-cur').textContent   = '0:00';
+  $('#time-total').textContent = '0:00';
+  $('#btn-play').textContent = '▶';
+  isPlaying = false;
+  updateMediaSessionState(false);
+}
+
+function playNext() { if (tracks.length) playTrack((currentIdx + 1) % tracks.length); }
+function playPrev() { if (tracks.length) playTrack((currentIdx - 1 + tracks.length) % tracks.length); }
+
+function saveRecentTrack(t) {
+  if (!t) return;
+  const item = {
+    id: t.id, title: t.title, type: t.type,
+    thumb: t.thumb || '', videoId: t.videoId || '', addedAt: Date.now()
+  };
+  const recent = getRecent().filter(
+    x => String(x.id) !== String(item.id) && x.title !== item.title
+  );
+  recent.unshift(item);
+  localStorage.setItem(RECENT_KEY, JSON.stringify(recent.slice(0, 12)));
+}
+
+// ── playTrack ──────────────────────────────────────────
+async function playTrack(idx) {
+  if (idx < 0 || idx >= tracks.length) return;
+  currentIdx = idx;
+  const t = tracks[idx];
+
+  stopAll();
+  startWakeLock();
+  saveRecentTrack(t);
+  updateNowPlaying(t);
+  setupMediaSession(t);
+
+  const vol = getVolume();
+
+  // ── YouTube via embed (fungerar för alla, ingen server yt-dlp) ──
+  if (t.type === 'youtube') {
+    const host = $('#sp-player');
+    if (host) host.innerHTML = '';
+    const iframe = document.createElement('iframe');
+    iframe.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(t.videoId)}?autoplay=1`;
+    iframe.width = '1';
+    iframe.height = '1';
+    iframe.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
+    iframe.setAttribute('allowfullscreen', '');
+    if (host) host.appendChild(iframe);
+    window._currentAudio = null;
+    isPlaying = true;
+    $('#btn-play').textContent = '⏸';
+    updateMediaSessionState(true);
+    toast('Spelar via YouTube', '▶');
+  }
+
+  // ── Spotify (iframe, ingen bättre lösning) ────────
+  if (t.type === 'spotify') {
+    const host = $('#sp-player');
+    host.innerHTML = '';
+    const iframe = document.createElement('iframe');
+    iframe.src    = t.embedUrl;
+    iframe.width  = '1';
+    iframe.height = '1';
+    iframe.allow  = 'autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture';
+    host.appendChild(iframe);
+    isPlaying = true;
+    $('#btn-play').textContent = '⏸';
+    updateMediaSessionState(true);
+  }
+
+  // ── Lokal fil ─────────────────────────────────────
+  if (t.type === 'local') {
+    const audio = new Audio(t.blobUrl);
+    audio.volume  = vol / 100;
+    audio.onended = playNext;
+    audio.play().catch(() => toast('Kunde inte spela filen', '⚠️'));
+    window._currentAudio = audio;
+    isPlaying = true;
+    $('#btn-play').textContent = '⏸';
+    updateMediaSessionState(true);
+    startAudioProgress(audio);
+  }
+
+  $$('#track-tbody tr').forEach((tr, i) => {
+    tr.classList.toggle('playing', i === idx);
+  });
+  renderRecent();
+}
+
+// ── Add track ──────────────────────────────────────────
+async function addUrlTrack(url) {
+  url = String(url || '').trim();
+  if (!url) return;
+
+  const ytId = parseYouTubeId(url);
+  if (ytId) {
+    toast('Hämtar låtinfo…', '⏳');
+    const title = await fetchYtTitle(ytId);
+    const track = await dbAdd('tracks', {
+      playlistId: activePlaylistId,
+      type:       'youtube',
+      videoId:    ytId,
+      title,
+      artist:     'YouTube',
+      length:     '–',
+      thumb:      `https://i.ytimg.com/vi/${ytId}/mqdefault.jpg`
+    });
+    tracks.push(track);
+    renderTracks();
+    renderSidebar();
+    toast(title, '✓');
+    return;
+  }
+
+  const sp = parseSpotify(url);
+  if (sp) {
+    const track = await dbAdd('tracks', {
+      playlistId: activePlaylistId,
+      type:       'spotify',
+      embedUrl:   sp,
+      title:      'Spotify track',
+      artist:     'Spotify',
+      length:     '–'
+    });
+    tracks.push(track);
+    renderTracks();
+    renderSidebar();
+    toast('Spotify-låt tillagd', '✓');
+    return;
+  }
+
+  toast('Okänd länk — prova en YouTube- eller Spotify-URL', '⚠️');
+}
+
+// ── UI bindings ────────────────────────────────────────
+function bindUI() {
+  const input = $('#global-search');
+  input.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const v = input.value.trim();
+    if (!v) return;
+    addUrlTrack(v);
+    input.value = '';
+  });
+
+  $('#btn-add-url').onclick = () => {
+    const v = prompt('Klistra in en YouTube- eller Spotify-URL:');
+    if (v) addUrlTrack(v);
+  };
+
+  $('#btn-add-track').onclick = () => {
+    const v = prompt('Klistra in en YouTube- eller Spotify-URL:');
+    if (v) addUrlTrack(v);
+  };
+
+  $('#btn-create-playlist').onclick = async () => {
+    const name = prompt('Spellistenamn:');
+    if (!name?.trim()) return;
+    const p = await dbAdd('playlists', { name: name.trim(), createdAt: Date.now() });
+    playlists.push(p);
+    activePlaylistId = p.id;
+    renderSidebar();
+    loadTracks();
+  };
+
+  $('#btn-play').onclick = () => {
+    if (currentIdx === -1) return;
+    if (isPlaying) pausePlayback();
+    else resumePlayback();
+  };
+
+  $('#btn-next').onclick = playNext;
+  $('#btn-prev').onclick = playPrev;
+
+  const volSlider = $('#vol-slider');
+  volSlider.value = getSavedVolume();
+  volSlider.oninput = e => {
+    const val = Number(e.target.value);
+    saveVolume(val);
+    if (window._currentAudio) window._currentAudio.volume = val / 100;
+  };
+
+  $('#progress-track').addEventListener('click', e => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct  = (e.clientX - rect.left) / rect.width;
+    if (window._currentAudio?.duration) {
+      window._currentAudio.currentTime = pct * window._currentAudio.duration;
+    }
+  });
+
+  const menu = $('#settings-menu');
+  $('#playlist-menu').onclick = e => {
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    menu.style.right = '14px';
+    menu.style.top   = (r.bottom + 6) + 'px';
+    menu.classList.toggle('open');
+  };
+
+  document.addEventListener('click', () => menu.classList.remove('open'));
+  menu.addEventListener('click', async e => {
+    e.stopPropagation();
+    const action = e.target.dataset.action;
+    if (!action) return;
+    const s = getSettings();
+
+    if (action === 'rename') {
+      const p = playlists.find(x => x.id === activePlaylistId);
+      if (!p) return;
+      const n = prompt('Nytt namn:', p.name);
+      if (!n?.trim()) return;
+      p.name = n.trim();
+      await dbPut('playlists', p);
+      renderSidebar();
+    }
+
+    if (action === 'username') {
+      const n = prompt('Visningsnamn:', s.username || '');
+      if (n !== null) { s.username = n.trim(); saveSettings(s); applySettings(); }
+    }
+
+    if (action === 'clear-recent') {
+      localStorage.removeItem(RECENT_KEY);
+      renderRecent();
+      toast('Senast spelade rensade', '✓');
+    }
+
+    menu.classList.remove('open');
+  });
+
+  document.addEventListener('keydown', e => {
+    if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+    if (e.code === 'Space')                   { e.preventDefault(); $('#btn-play').click(); }
+    if (e.code === 'ArrowRight' && e.ctrlKey) playNext();
+    if (e.code === 'ArrowLeft'  && e.ctrlKey) playPrev();
+  });
+
+  $('#recent-prev').onclick = () => $('#recent-row').scrollBy({ left: -300, behavior: 'smooth' });
+  $('#recent-next').onclick = () => $('#recent-row').scrollBy({ left:  300, behavior: 'smooth' });
+}
+
+// ── Apply settings ─────────────────────────────────────
+function applySettings() {
+  const s    = getSettings();
+  const name = s.username
+    || localStorage.getItem('runspace_username')
+    || localStorage.getItem('username')
+    || '';
+  const greetingEl = $('#greeting');
+  const spanEl     = $('#username-span');
+  if (greetingEl) greetingEl.firstChild.textContent = greeting() + ' ';
+  if (spanEl)     spanEl.textContent = name ? name + ' 👋' : '';
+}
+
+// ── Load tracks ────────────────────────────────────────
+async function loadTracks() {
+  tracks = (await dbGetAll('tracks')).filter(t => t.playlistId === activePlaylistId);
+  renderTracks();
+}
+
+// ── Init ───────────────────────────────────────────────
+async function init() {
+  await openDB();
+  playlists = await dbGetAll('playlists');
+  if (!playlists.length) {
+    const p = await dbAdd('playlists', { name: 'Main Playlist', createdAt: Date.now() });
+    playlists = [p];
+  }
+  activePlaylistId = playlists[0].id;
+  bindUI();
+  applySettings();
+  renderSidebar();
+  await loadTracks();
+}
+
+window.addEventListener('DOMContentLoaded', init);

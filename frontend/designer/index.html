@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script src="../theme.js"></script>
+<meta charset="UTF-8"/>
+<title>RunSpaceApp – Microsoft Visual Studio</title>
+<link href="https://fonts.googleapis.com/css2?family=Consolas:wght@400&family=Segoe+UI:wght@400;600&display=swap" rel="stylesheet"/>
+</head>
+<body>
+
+<!-- MENU BAR -->
+<div class="menubar" id="menubar">
+  <div class="menubar-item" onclick="toggleMenu(this,'mFile')">File
+    <div class="dropdown" id="mFile">
+      <div class="dropdown-item" onclick="newFile()">New File <span>Ctrl+N</span></div>
+      <div class="dropdown-item" onclick="closeMenus()">New Project… <span>Ctrl+Shift+N</span></div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item">Open File… <span>Ctrl+O</span></div>
+      <div class="dropdown-item">Open Project… <span>Ctrl+Shift+O</span></div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item" onclick="saveFile()">Save Form1.cs <span>Ctrl+S</span></div>
+      <div class="dropdown-item" onclick="saveFile()">Save All <span>Ctrl+Shift+S</span></div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item disabled">Recent Files ▶</div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item" onclick="closeMenus()">Exit</div>
+    </div>
+  </div>
+  <div class="menubar-item" onclick="toggleMenu(this,'mEdit')">Edit
+    <div class="dropdown" id="mEdit">
+      <div class="dropdown-item" onclick="closeMenus()">Undo <span>Ctrl+Z</span></div>
+      <div class="dropdown-item" onclick="closeMenus()">Redo <span>Ctrl+Y</span></div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item">Cut <span>Ctrl+X</span></div>
+      <div class="dropdown-item">Copy <span>Ctrl+C</span></div>
+      <div class="dropdown-item">Paste <span>Ctrl+V</span></div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item">Find… <span>Ctrl+F</span></div>
+      <div class="dropdown-item">Find and Replace <span>Ctrl+H</span></div>
+      <div class="dropdown-item" onclick="closeMenus()">Go To Line… <span>Ctrl+G</span></div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item" onclick="commentSelection()">Comment Selection <span>Ctrl+K,C</span></div>
+    </div>
+  </div>
+  <div class="menubar-item" onclick="toggleMenu(this,'mView')">View
+    <div class="dropdown" id="mView">
+      <div class="dropdown-item" onclick="togglePanel('bottom-panel')">Output <span>Alt+2</span></div>
+      <div class="dropdown-item" onclick="switchBottomTabById('errors')">Error List <span>Alt+3</span></div>
+      <div class="dropdown-item">Solution Explorer <span>Ctrl+Alt+L</span></div>
+      <div class="dropdown-item">Properties Window <span>F4</span></div>
+      <div class="dropdown-item">Toolbox <span>Ctrl+Alt+X</span></div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item" onclick="closeMenus()">Full Screen <span>Shift+Alt+Enter</span></div>
+    </div>
+  </div>
+  <div class="menubar-item" onclick="toggleMenu(this,'mBuild')">Build
+    <div class="dropdown" id="mBuild">
+      <div class="dropdown-item" onclick="buildSolution()">Build Solution <span>Ctrl+Shift+B</span></div>
+      <div class="dropdown-item" onclick="rebuildSolution()">Rebuild Solution</div>
+      <div class="dropdown-item" onclick="cleanSolution()">Clean Solution</div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item" onclick="buildSolution()">Build RunSpaceApp</div>
+    </div>
+  </div>
+  <div class="menubar-item" onclick="toggleMenu(this,'mDebug')">Debug
+    <div class="dropdown" id="mDebug">
+      <div class="dropdown-item" onclick="startDebug()">▶ Start Debugging <span>F5</span></div>
+      <div class="dropdown-item" onclick="startWithoutDebug()">Start Without Debugging <span>Ctrl+F5</span></div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item" onclick="setBreakpoint()">Toggle Breakpoint <span>F9</span></div>
+      <div class="dropdown-item disabled">Step Over <span>F10</span></div>
+      <div class="dropdown-item disabled">Step Into <span>F11</span></div>
+      <div class="dropdown-item disabled">Step Out <span>Shift+F11</span></div>
+    </div>
+  </div>
+  <div class="menubar-item" onclick="toggleMenu(this,'mTools')">Tools
+    <div class="dropdown" id="mTools">
+      <div class="dropdown-item">NuGet Package Manager ▶</div>
+      <div class="dropdown-item">Extensions and Updates…</div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item" onclick="closeMenus()">Options…</div>
+    </div>
+  </div>
+  <div class="menubar-item" onclick="toggleMenu(this,'mHelp')">Help
+    <div class="dropdown" id="mHelp">
+      <div class="dropdown-item">View Help <span>F1</span></div>
+      <div class="dropdown-item">Check for Updates…</div>
+      <div class="dropdown-sep"></div>
+      <div class="dropdown-item" onclick="closeMenus()">About Microsoft Visual Studio</div>
+    </div>
+  </div>
+</div>
+
+<!-- TOOLBAR -->
+<div class="toolbar">
+  <button class="tb-btn start" onclick="startDebug()">▶ Start</button>
+  <div class="tb-sep"></div>
+  <div class="tb-dropdown">Debug ▾</div>
+  <div class="tb-sep"></div>
+  <div class="tb-dropdown">Any CPU ▾</div>
+  <div class="tb-sep"></div>
+  <button class="tb-btn" title="Save (Ctrl+S)" onclick="saveFile()">💾</button>
+  <button class="tb-btn" title="Undo" onclick="log('Undo','info')">↩</button>
+  <button class="tb-btn" title="Redo" onclick="log('Redo','info')">↪</button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn" title="Build Solution" onclick="buildSolution()">🔨</button>
+  <button class="tb-btn" title="Find" onclick="log('Find dialog','info')">🔍</button>
+  <div class="tb-sep"></div>
+  <button class="tb-btn" title="Comment" onclick="commentSelection()">//</button>
+  <button class="tb-btn" title="Format document" onclick="log('Document formatted','success')">⊞</button>
+  <button class="tb-btn" title="Toggle breakpoint" onclick="setBreakpoint()">🔴</button>
+</div>
+
+<!-- TABS -->
+<div class="tabbar">
+  <div class="tab" id="tab0" onclick="switchTab(0)">
+    <span>🎨</span> Form1.cs [Design]
+    <span class="tab-close" onclick="event.stopPropagation()">✕</span>
+  </div>
+  <div class="tab active" id="tab1" onclick="switchTab(1)">
+    <span>📄</span> Form1.cs
+    <span class="tab-close" onclick="event.stopPropagation()">✕</span>
+  </div>
+  <div class="tab" id="tab2" onclick="switchTab(2)">
+    <span>📄</span> Program.cs
+    <span class="tab-close" onclick="event.stopPropagation()">✕</span>
+  </div>
+</div>
+
+<!-- MAIN -->
+<div class="main">
+  <!-- TOOLBOX -->
+  <div class="sidebar-left">
+    <div class="panel-title">Toolbox</div>
+    <div style="overflow-y:auto;flex:1;">
+      <div class="toolbox-section">
+        <div class="toolbox-section-header">▾ Common Controls</div>
+        <div class="toolbox-item" draggable="true">🔘 Button</div>
+        <div class="toolbox-item" draggable="true">🏷️ Label</div>
+        <div class="toolbox-item" draggable="true">📝 TextBox</div>
+        <div class="toolbox-item" draggable="true">☑️ CheckBox</div>
+        <div class="toolbox-item" draggable="true">⭕ RadioButton</div>
+        <div class="toolbox-item" draggable="true">📋 ComboBox</div>
+        <div class="toolbox-item" draggable="true">📜 ListBox</div>
+        <div class="toolbox-item" draggable="true">📊 ProgressBar</div>
+        <div class="toolbox-item" draggable="true">📅 DateTimePicker</div>
+        <div class="toolbox-item" draggable="true">🔢 NumericUpDown</div>
+        <div class="toolbox-item" draggable="true">📷 PictureBox</div>
+        <div class="toolbox-item" draggable="true">📐 TrackBar</div>
+      </div>
+      <div class="toolbox-section">
+        <div class="toolbox-section-header">▾ Containers</div>
+        <div class="toolbox-item" draggable="true">🪟 GroupBox</div>
+        <div class="toolbox-item" draggable="true">📑 TabControl</div>
+        <div class="toolbox-item" draggable="true">➗ SplitContainer</div>
+        <div class="toolbox-item" draggable="true">📦 Panel</div>
+        <div class="toolbox-item" draggable="true">🗃️ FlowLayoutPanel</div>
+      </div>
+      <div class="toolbox-section">
+        <div class="toolbox-section-header">▾ Menus &amp; Toolbars</div>
+        <div class="toolbox-item" draggable="true">☰ MenuStrip</div>
+        <div class="toolbox-item" draggable="true">🔧 ToolStrip</div>
+        <div class="toolbox-item" draggable="true">📌 StatusStrip</div>
+        <div class="toolbox-item" draggable="true">📎 ContextMenuStrip</div>
+      </div>
+      <div class="toolbox-section">
+        <div class="toolbox-section-header">▾ Dialogs</div>
+        <div class="toolbox-item" draggable="true">📂 OpenFileDialog</div>
+        <div class="toolbox-item" draggable="true">💾 SaveFileDialog</div>
+        <div class="toolbox-item" draggable="true">🎨 ColorDialog</div>
+        <div class="toolbox-item" draggable="true">🔤 FontDialog</div>
+        <div class="toolbox-item" draggable="true">📁 FolderBrowserDialog</div>
+      </div>
+      <div class="toolbox-section">
+        <div class="toolbox-section-header">▾ Data</div>
+        <div class="toolbox-item" draggable="true">🗄️ DataGridView</div>
+        <div class="toolbox-item" draggable="true">🌳 TreeView</div>
+        <div class="toolbox-item" draggable="true">📊 Chart</div>
+        <div class="toolbox-item" draggable="true">🔗 BindingSource</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EDITOR -->
+  <div class="editor-area" id="editorArea">
+    <div class="line-numbers" id="lineNumbers"></div>
+    <div class="code-content" id="codeEditor" contenteditable="true" spellcheck="false"
+         onkeydown="handleKey(event)" onmouseup="updateCursor()"></div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="sidebar-right">
+    <div class="panel-title">Solution Explorer</div>
+    <div class="sol-exp">
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon">🔷</span>Solution 'RunSpaceApp' (1 project)</div>
+      <div class="sol-item selected" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:14px">📦</span>RunSpaceApp<span class="sol-badge">C#</span></div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:28px">📁</span>Properties <span style="margin-left:auto;font-size:9px;color:var(--text-dim)">▶</span></div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:42px">📋</span>AssemblyInfo.cs</div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:42px">⚙️</span>Settings.settings</div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:42px">🔖</span>Resources.resx</div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:28px">📁</span>References <span style="margin-left:auto;font-size:9px;color:var(--text-dim)">▼</span></div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:42px">📚</span>System</div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:42px">📚</span>System.Windows.Forms</div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:42px">📚</span>System.Drawing</div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:42px">📚</span>System.Data</div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:42px">📚</span>System.Xml</div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:42px">📚</span>Microsoft.CSharp</div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:28px">📁</span>Forms <span style="margin-left:auto;font-size:9px;color:var(--text-dim)">▼</span></div>
+      <div class="sol-item" onclick="selectSolItem(this);switchTab(1)"><span class="sol-icon" style="margin-left:42px">📄</span><span style="color:#4fc1ff">Form1.cs</span></div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:42px">🎨</span>Form1.Designer.cs</div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:42px">🔖</span>Form1.resx</div>
+      <div class="sol-item" onclick="selectSolItem(this);switchTab(2)"><span class="sol-icon" style="margin-left:28px">📄</span><span style="color:#4fc1ff">Program.cs</span></div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:28px">⚙️</span>App.config</div>
+      <div class="sol-item" onclick="selectSolItem(this)"><span class="sol-icon" style="margin-left:28px">📦</span>packages.config</div>
+    </div>
+
+    <!-- PROPERTIES PANEL -->
+    <div class="props-panel">
+      <div class="panel-title">Properties</div>
+      <div class="props-object">
+        <span>🔘</span>
+        <select id="propsSelector" onchange="changePropsTarget(this.value)">
+          <option value="button1">button1  System.Windows.Forms.Button</option>
+          <option value="form1">Form1  System.Windows.Forms.Form</option>
+          <option value="textBox1">textBox1  System.Windows.Forms.TextBox</option>
+          <option value="label1">label1  System.Windows.Forms.Label</option>
+        </select>
+      </div>
+      <div class="props-tabs">
+        <div class="props-tab active" onclick="switchPropsTab(this,'props')">⊞ Properties</div>
+        <div class="props-tab" onclick="switchPropsTab(this,'events')">⚡ Events</div>
+      </div>
+      <div class="props-table" id="propsTable"></div>
+    </div>
+  </div>
+</div>
+
+<!-- BOTTOM PANEL -->
+<div class="bottom-panel" id="bottom-panel">
+  <div class="bottom-tabs">
+    <div class="bottom-tab active" id="btab-output" onclick="switchBottomTab(this,'output')">Output</div>
+    <div class="bottom-tab" id="btab-errors" onclick="switchBottomTab(this,'errors')">Error List</div>
+    <div class="bottom-tab" id="btab-immediate" onclick="switchBottomTab(this,'immediate')">Immediate Window</div>
+    <div style="margin-left:auto;padding:4px 8px;color:var(--text-dim);cursor:pointer" onclick="clearOutput()">✕ Clear</div>
+  </div>
+  <div class="output-area" id="outputArea"></div>
+</div>
+
+<!-- STATUS BAR -->
+<div class="statusbar">
+  <span id="statusLeft">Ready</span>
+  <div class="statusbar-right">
+    <span id="statusCursor">Ln 1, Col 1</span>
+    <span>UTF-8</span><span>CRLF</span>
+    <span>Debug | Any CPU</span>
+    <span>▼</span>
+  </div>
+</div>
+
+<!-- CONTEXT MENU -->
+<div class="ctx-menu" id="ctxMenu">
+  <div class="ctx-item" onclick="startDebug()">▶ Run <span>F5</span></div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item">Cut <span>Ctrl+X</span></div>
+  <div class="ctx-item">Copy <span>Ctrl+C</span></div>
+  <div class="ctx-item">Paste <span>Ctrl+V</span></div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="setBreakpoint()">Toggle Breakpoint <span>F9</span></div>
+  <div class="ctx-item">Go To Definition <span>F12</span></div>
+  <div class="ctx-item">Quick Actions… <span>Ctrl+.</span></div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="commentSelection()">Comment Selection</div>
+</div>
+
+<!-- ═══ POPUP APP WINDOW ═══ -->
+<div class="popup-overlay" id="popupOverlay">
+  <div class="popup-win" id="popupWin">
+    <div class="popup-titlebar" id="popupTitlebar">
+      <span class="popup-titlebar-icon">🖥️</span>
+      <span id="popupWinTitle">Form1</span>
+      <div class="popup-titlebar-btns">
+        <div class="ptb" title="Minimize">🗕</div>
+        <div class="ptb" title="Maximize">🗗</div>
+        <div class="ptb close-btn" title="Close" onclick="closePopup()">✕</div>
+      </div>
+    </div>
+    <div class="popup-menubar">
+      <div class="pm-item">File</div>
+      <div class="pm-item">Edit</div>
+      <div class="pm-item">View</div>
+      <div class="pm-item">Help</div>
+    </div>
+    <div class="popup-toolbar">
+      <div class="ptool" title="New">📄</div>
+      <div class="ptool" title="Open">📂</div>
+      <div class="ptool" title="Save">💾</div>
+      <div style="width:1px;background:#a0a0a0;margin:2px 4px;"></div>
+      <div class="ptool" title="Cut">✂️</div>
+      <div class="ptool" title="Copy">📋</div>
+      <div class="ptool" title="Paste">📥</div>
+      <div style="width:1px;background:#a0a0a0;margin:2px 4px;"></div>
+      <div class="ptool" title="Run" onclick="popupRun()">▶</div>
+      <div class="ptool" title="Stop" onclick="popupStop()">⏹</div>
+    </div>
+
+    <!-- Tab bar inside popup -->
+    <div class="popup-tab-bar">
+      <div class="popup-tab active" onclick="switchPopupTab(this,'ptab-main')">Main</div>
+      <div class="popup-tab" onclick="switchPopupTab(this,'ptab-counter')">Counter</div>
+      <div class="popup-tab" onclick="switchPopupTab(this,'ptab-colors')">Colors</div>
+      <div class="popup-tab" onclick="switchPopupTab(this,'ptab-about')">About</div>
+    </div>
+
+    <!-- TAB: Main -->
+    <div class="popup-tab-content active" id="ptab-main">
+      <div class="popup-body">
+        <div class="popup-group">
+          <div class="popup-group-title">User Input</div>
+          <div class="popup-label">Name:</div>
+          <input class="win-input" id="popupName" type="text" value="" placeholder="Enter your name…"/>
+          <div style="height:6px"></div>
+          <div class="popup-label">Message:</div>
+          <input class="win-input" id="popupMsg" type="text" value="" placeholder="Enter a message…"/>
+        </div>
+        <div class="popup-group">
+          <div class="popup-group-title">Options</div>
+          <label class="win-checkbox"><input type="checkbox" id="chkBold"/> Bold text</label>
+          <label class="win-checkbox"><input type="checkbox" id="chkSave" checked/> Save on close</label>
+          <div style="height:4px"></div>
+          <label class="win-radio"><input type="radio" name="mode" value="a" checked/> Mode A</label>
+          <label class="win-radio"><input type="radio" name="mode" value="b"/> Mode B</label>
+          <label class="win-radio"><input type="radio" name="mode" value="c"/> Mode C</label>
+        </div>
+        <div>
+          <div class="popup-label">Items:</div>
+          <div class="win-listbox" id="popupList"></div>
+        </div>
+        <div>
+          <div class="popup-label">Progress: <span id="sliderVal">0%</span></div>
+          <div class="progress-outer"><div class="progress-inner" id="progressInner" style="width:0%"></div></div>
+          <input type="range" id="popupSlider" min="0" max="100" value="0" style="width:100%;margin-top:4px" oninput="updateSlider(this.value)"/>
+        </div>
+        <div class="popup-btn-row">
+          <button class="win-btn" onclick="popupAdd()">➕ Add</button>
+          <button class="win-btn" onclick="popupClear()">🗑 Clear</button>
+          <button class="win-btn default-btn" onclick="popupSubmit()">✔ OK</button>
+          <button class="win-btn" onclick="closePopup()">✕ Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: Counter -->
+    <div class="popup-tab-content" id="ptab-counter">
+      <div class="popup-body">
+        <div class="popup-group">
+          <div class="popup-group-title">Click Counter</div>
+          <div class="counter-display" id="counterDisplay">000</div>
+          <div class="popup-btn-row">
+            <button class="win-btn" onclick="counterAdd(1)">+1</button>
+            <button class="win-btn" onclick="counterAdd(5)">+5</button>
+            <button class="win-btn" onclick="counterAdd(10)">+10</button>
+            <button class="win-btn" onclick="counterAdd(-1)">-1</button>
+            <button class="win-btn" onclick="counterReset()">Reset</button>
+          </div>
+        </div>
+        <div id="counterLog" style="font-size:11px;color:#555;max-height:60px;overflow-y:auto;padding:4px;background:#fff;border:2px inset #888;"></div>
+      </div>
+    </div>
+
+    <!-- TAB: Colors -->
+    <div class="popup-tab-content" id="ptab-colors">
+      <div class="popup-body">
+        <div class="popup-group">
+          <div class="popup-group-title">Color Picker</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px" id="colorPalette"></div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div id="colorPreview" style="width:40px;height:40px;border:2px inset #888;background:#ffffff"></div>
+            <span id="colorHex" style="font-family:Consolas,monospace;font-size:13px">#FFFFFF</span>
+          </div>
+        </div>
+        <div class="popup-group">
+          <div class="popup-group-title">Background Color</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap" id="bgPalette"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: About -->
+    <div class="popup-tab-content" id="ptab-about">
+      <div class="popup-body">
+        <div class="popup-group">
+          <div class="popup-group-title">RunSpaceApp v1.0.0</div>
+          <p style="font-size:12px;line-height:1.6;color:#333">
+            RunSpaceApp is a sample Windows Forms application built with C# and .NET Framework 4.8.
+            <br><br>
+            <b>Build:</b> Debug | Any CPU<br>
+            <b>Framework:</b> .NET Framework 4.8<br>
+            <b>Runtime:</b> CLR 4.0.30319<br>
+            <b>VS Version:</b> Visual Studio 2019 (16.11)
+          </p>
+        </div>
+        <div class="popup-group" style="font-size:11px;color:#555">
+          <div class="popup-group-title">System Info</div>
+          OS: Windows 10 (simulated)<br>
+          CPU: Any CPU<br>
+          RAM: 8 GB (simulated)<br>
+          PID: 4821 (simulated)
+        </div>
+        <div class="popup-btn-row">
+          <button class="win-btn default-btn" onclick="switchPopupTab(document.querySelector('.popup-tab'),'ptab-main')">OK</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="popup-statusbar">
+      <div class="ps-light" id="popupStatusLight"></div>
+      <span id="popupStatus">Running…</span>
+      <span style="margin-left:auto;font-size:10px;color:#777" id="popupTime"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════
+// CODE CONTENT
+// ══════════════════════════════════════
+const CODES = {
+'Form1.cs':`<span class="kw">using</span> <span class="ns">System</span>;
+<span class="kw">using</span> <span class="ns">System.Drawing</span>;
+<span class="kw">using</span> <span class="ns">System.Windows.Forms</span>;
+
+<span class="kw">namespace</span> <span class="type">RunSpaceApp</span>
+{
+    <span class="kw">public</span> <span class="kw">partial</span> <span class="kw">class</span> <span class="type">Form1</span> : <span class="type">Form</span>
+    {
+        <span class="kw">private</span> <span class="type">Button</span> button1;
+        <span class="kw">private</span> <span class="type">TextBox</span> textBox1;
+        <span class="kw">private</span> <span class="type">Label</span> label1;
+        <span class="kw">private</span> <span class="type">ProgressBar</span> progressBar1;
+
+        <span class="kw">public</span> <span class="fn">Form1</span>() {
+            <span class="fn">InitializeComponent</span>();
+        }
+
+        <span class="kw">private</span> <span class="kw">void</span> <span class="fn">InitializeComponent</span>() {
+            <span class="kw">this</span>.Text = <span class="str">"Form1"</span>;
+            <span class="kw">this</span>.Size = <span class="kw">new</span> <span class="type">Size</span>(<span class="num">400</span>, <span class="num">300</span>);
+            <span class="kw">this</span>.BackColor = <span class="type">Color</span>.FromArgb(<span class="num">240</span>, <span class="num">240</span>, <span class="num">240</span>);
+
+            <span class="cmt">// Initialize button</span>
+            button1 = <span class="kw">new</span> <span class="type">Button</span>();
+            button1.Text = <span class="str">"button1"</span>;
+            button1.Location = <span class="kw">new</span> <span class="type">Point</span>(<span class="num">100</span>, <span class="num">200</span>);
+            button1.Click += <span class="kw">new</span> <span class="type">EventHandler</span>(button1_Click);
+            <span class="kw">this</span>.Controls.Add(button1);
+
+            <span class="cmt">// Initialize textBox1</span>
+            textBox1 = <span class="kw">new</span> <span class="type">TextBox</span>();
+            textBox1.Location = <span class="kw">new</span> <span class="type">Point</span>(<span class="num">12</span>, <span class="num">40</span>);
+            textBox1.Size = <span class="kw">new</span> <span class="type">Size</span>(<span class="num">250</span>, <span class="num">20</span>);
+            <span class="kw">this</span>.Controls.Add(textBox1);
+
+            <span class="cmt">// Initialize label1</span>
+            label1 = <span class="kw">new</span> <span class="type">Label</span>();
+            label1.Text = <span class="str">"label1"</span>;
+            label1.Location = <span class="kw">new</span> <span class="type">Point</span>(<span class="num">12</span>, <span class="num">20</span>);
+            <span class="kw">this</span>.Controls.Add(label1);
+        }
+
+        <span class="kw">private</span> <span class="kw">void</span> <span class="fn">button1_Click</span>(<span class="type">object</span> sender, <span class="type">EventArgs</span> e)
+        {
+            <span class="kw">this</span>.Close();
+        }
+    }
+}`,
+'Program.cs':`<span class="kw">using</span> <span class="ns">System</span>;
+<span class="kw">using</span> <span class="ns">System.Windows.Forms</span>;
+
+<span class="kw">namespace</span> <span class="type">RunSpaceApp</span>
+{
+    <span class="kw">static</span> <span class="kw">class</span> <span class="type">Program</span>
+    {
+        <span class="cmt">/// &lt;summary&gt;</span>
+        <span class="cmt">/// The main entry point for the application.</span>
+        <span class="cmt">/// &lt;/summary&gt;</span>
+        [STAThread]
+        <span class="kw">static</span> <span class="kw">void</span> <span class="fn">Main</span>()
+        {
+            <span class="type">Application</span>.EnableVisualStyles();
+            <span class="type">Application</span>.SetCompatibleTextRenderingDefault(<span class="kw">false</span>);
+            <span class="type">Application</span>.Run(<span class="kw">new</span> <span class="fn">Form1</span>());
+        }
+    }
+}`
+};
+
+let currentFile = 'Form1.cs';
+let breakpoints = new Set();
+let propsMode = 'props';
+let counterVal = 0;
+
+// ══════════════════════════════════════
+// RENDER CODE + LINE NUMBERS
+// ══════════════════════════════════════
+function renderCode(file) {
+  const editor = document.getElementById('codeEditor');
+  const lnDiv  = document.getElementById('lineNumbers');
+  const code = CODES[file] || '';
+  const lines = code.split('\n');
+  editor.innerHTML = '';
+  lnDiv.innerHTML = '';
+  lines.forEach((line, i) => {
+    const ln = i + 1;
+    // line number
+    const lnEl = document.createElement('div');
+    lnEl.className = 'ln-entry' + (breakpoints.has(ln) ? ' bp' : '');
+    lnEl.textContent = ln;
+    lnEl.dataset.line = ln;
+    lnEl.title = 'Click to toggle breakpoint';
+    lnEl.onclick = () => toggleBreakpointLine(ln);
+    lnDiv.appendChild(lnEl);
+    // code line
+    const span = document.createElement('span');
+    span.className = 'code-line' + (breakpoints.has(ln) ? ' bp-line' : '');
+    span.innerHTML = line || '\u200b';
+    editor.appendChild(span);
+    editor.appendChild(document.createTextNode('\n'));
+  });
+  setStatus('Ready');
+}
+
+function toggleBreakpointLine(n) {
+  if (breakpoints.has(n)) breakpoints.delete(n);
+  else { breakpoints.add(n); log(`Breakpoint set at line ${n}`, 'info'); }
+  renderCode(currentFile);
+}
+
+// ══════════════════════════════════════
+// PROPERTIES DATA
+// ══════════════════════════════════════
+const propsData = {
+  button1:{
+    props:[
+      {g:'Appearance',k:'BackColor',v:'Control'},{g:'Appearance',k:'FlatStyle',v:'Standard'},
+      {g:'Appearance',k:'ForeColor',v:'ControlText'},{g:'Appearance',k:'Text',v:'button1'},
+      {g:'Behavior',k:'AutoSize',v:'False'},{g:'Behavior',k:'Enabled',v:'True'},
+      {g:'Behavior',k:'TabStop',v:'True'},{g:'Behavior',k:'UseVisualStyleBackColor',v:'True'},
+      {g:'Design',k:'(Name)',v:'button1'},{g:'Design',k:'Modifiers',v:'Private'},
+      {g:'Layout',k:'Anchor',v:'Top, Left'},{g:'Layout',k:'Location',v:'100, 200'},
+      {g:'Layout',k:'Margin',v:'3, 3, 3, 3'},{g:'Layout',k:'Size',v:'75, 23'},
+      {g:'Layout',k:'TabIndex',v:'0'},
+    ],
+    events:[
+      {k:'Click',v:'button1_Click'},{k:'DoubleClick',v:''},{k:'MouseEnter',v:''},
+      {k:'MouseLeave',v:''},{k:'MouseDown',v:''},{k:'MouseUp',v:''},
+      {k:'KeyDown',v:''},{k:'KeyUp',v:''},{k:'KeyPress',v:''},
+    ]
+  },
+  form1:{
+    props:[
+      {g:'Appearance',k:'BackColor',v:'Control'},{g:'Appearance',k:'Font',v:'Microsoft Sans Serif, 8.25pt'},
+      {g:'Appearance',k:'ForeColor',v:'ControlText'},{g:'Appearance',k:'Text',v:'Form1'},
+      {g:'Behavior',k:'AllowDrop',v:'False'},{g:'Behavior',k:'Enabled',v:'True'},
+      {g:'Behavior',k:'TopMost',v:'False'},
+      {g:'Design',k:'(Name)',v:'Form1'},{g:'Design',k:'Language',v:'(Default)'},
+      {g:'Layout',k:'AutoScaleMode',v:'Font'},{g:'Layout',k:'ClientSize',v:'400, 300'},
+      {g:'Layout',k:'MaximizeBox',v:'True'},{g:'Layout',k:'MinimizeBox',v:'True'},
+      {g:'Layout',k:'StartPosition',v:'WindowsDefaultLocation'},
+      {g:'Window Style',k:'FormBorderStyle',v:'Sizable'},{g:'Window Style',k:'ShowIcon',v:'True'},
+      {g:'Window Style',k:'ShowInTaskbar',v:'True'},
+    ],
+    events:[
+      {k:'FormClosed',v:''},{k:'FormClosing',v:''},{k:'Load',v:''},{k:'Shown',v:''},
+      {k:'Activated',v:''},{k:'Resize',v:''},{k:'Click',v:''},{k:'KeyDown',v:''},
+    ]
+  },
+  textBox1:{
+    props:[
+      {g:'Appearance',k:'BackColor',v:'Window'},{g:'Appearance',k:'BorderStyle',v:'Fixed3D'},
+      {g:'Appearance',k:'ForeColor',v:'WindowText'},
+      {g:'Behavior',k:'AcceptsReturn',v:'False'},{g:'Behavior',k:'AcceptsTab',v:'False'},
+      {g:'Behavior',k:'Multiline',v:'False'},{g:'Behavior',k:'ReadOnly',v:'False'},
+      {g:'Behavior',k:'ScrollBars',v:'None'},{g:'Behavior',k:'WordWrap',v:'True'},
+      {g:'Design',k:'(Name)',v:'textBox1'},
+      {g:'Layout',k:'Location',v:'12, 40'},{g:'Layout',k:'Size',v:'250, 20'},
+      {g:'Layout',k:'TabIndex',v:'1'},
+    ],
+    events:[
+      {k:'TextChanged',v:''},{k:'Click',v:''},{k:'KeyDown',v:''},{k:'KeyPress',v:''},
+      {k:'KeyUp',v:''},{k:'Leave',v:''},
+    ]
+  },
+  label1:{
+    props:[
+      {g:'Appearance',k:'AutoSize',v:'True'},{g:'Appearance',k:'BackColor',v:'Transparent'},
+      {g:'Appearance',k:'ForeColor',v:'ControlText'},{g:'Appearance',k:'Text',v:'label1'},
+      {g:'Appearance',k:'TextAlign',v:'TopLeft'},
+      {g:'Design',k:'(Name)',v:'label1'},
+      {g:'Layout',k:'Location',v:'12, 20'},{g:'Layout',k:'Size',v:'37, 13'},
+    ],
+    events:[{k:'Click',v:''},{k:'DoubleClick',v:''}]
+  }
+};
+
+function renderProps(target, mode) {
+  const table = document.getElementById('propsTable');
+  const data = propsData[target];
+  if(!data){table.innerHTML='';return;}
+  table.innerHTML='';
+  if(mode==='events'){
+    data.events.forEach(r=>{
+      const row=document.createElement('div');row.className='props-row';
+      row.innerHTML=`<div class="props-key">⚡ ${r.k}</div><div class="props-val"><input type="text" value="${r.v}" placeholder="(none)"/></div>`;
+      table.appendChild(row);
+    });
+  } else {
+    let lastG='';
+    data.props.forEach(r=>{
+      if(r.g&&r.g!==lastG){
+        const gh=document.createElement('div');gh.className='props-group-header';
+        gh.textContent='▾ '+r.g;table.appendChild(gh);lastG=r.g;
+      }
+      const row=document.createElement('div');row.className='props-row';
+      row.innerHTML=`<div class="props-key">${r.k}</div><div class="props-val"><input type="text" value="${r.v}"/></div>`;
+      table.appendChild(row);
+    });
+  }
+}
+
+function changePropsTarget(v){renderProps(v,propsMode);}
+function switchPropsTab(el,mode){
+  document.querySelectorAll('.props-tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');propsMode=mode;
+  renderProps(document.getElementById('propsSelector').value,mode);
+}
+
+// ══════════════════════════════════════
+// TABS
+// ══════════════════════════════════════
+function switchTab(i){
+  [0,1,2].forEach(n=>document.getElementById('tab'+n).classList.toggle('active',n===i));
+  if(i===0){log('Design view (not interactive in browser)','info');}
+  else if(i===1){currentFile='Form1.cs';renderCode(currentFile);}
+  else if(i===2){currentFile='Program.cs';renderCode(currentFile);}
+}
+
+// ══════════════════════════════════════
+// OUTPUT LOG
+// ══════════════════════════════════════
+function log(msg,type='info'){
+  const area=document.getElementById('outputArea');
+  const d=document.createElement('div');
+  const cls=type==='err'?'out-err':type==='warn'?'out-warn':type==='success'?'out-success':type==='dim'?'out-dim':'out-info';
+  d.className=cls;
+  const ts=new Date().toLocaleTimeString('sv-SE');
+  d.textContent=`[${ts}]  ${msg}`;
+  area.appendChild(d);area.scrollTop=area.scrollHeight;
+}
+function clearOutput(){document.getElementById('outputArea').innerHTML='';}
+
+// ══════════════════════════════════════
+// BUILD / DEBUG
+// ══════════════════════════════════════
+function buildSolution(){
+  closeMenus();setStatus('Building…');
+  log('------ Build started: Project: RunSpaceApp, Configuration: Debug Any CPU ------','dim');
+  setTimeout(()=>log('  Compiling Form1.cs…','dim'),200);
+  setTimeout(()=>log('  Compiling Program.cs…','dim'),400);
+  setTimeout(()=>log('  RunSpaceApp -> bin\\Debug\\RunSpaceApp.exe','dim'),600);
+  setTimeout(()=>{log('========== Build: 1 succeeded, 0 failed ==========','success');setStatus('Build succeeded');},800);
+}
+function rebuildSolution(){
+  closeMenus();log('------ Rebuild All started ------','dim');
+  setTimeout(()=>{log('  Cleaned RunSpaceApp','dim');buildSolution();},300);
+}
+function cleanSolution(){
+  closeMenus();log('------ Clean started ------','dim');
+  setTimeout(()=>{log('  Cleaned RunSpaceApp','dim');log('========== Clean: 1 succeeded ==========','success');setStatus('Clean succeeded');},500);
+}
+function startDebug(){
+  closeMenus();
+  setStatus('Building…');
+  log('------ Build started ------','dim');
+  setTimeout(()=>log('  Build: 1 succeeded','success'),400);
+  setTimeout(()=>{log('  Attaching debugger…','dim');setStatus('Running (Debug)');},600);
+  setTimeout(()=>{log('  Process started: RunSpaceApp.exe','success');showPopup();},900);
+}
+function startWithoutDebug(){
+  closeMenus();buildSolution();
+  setTimeout(()=>{log('  Starting without debugger…','dim');},700);
+  setTimeout(()=>{log('  Process started: RunSpaceApp.exe','success');setStatus('Running');showPopup();},1000);
+}
+function setBreakpoint(){
+  closeMenus();
+  const lines=document.querySelectorAll('.code-line');
+  if(lines.length){const n=Math.floor(Math.random()*lines.length)+1;toggleBreakpointLine(n);}
+}
+function commentSelection(){
+  closeMenus();log('Selection commented out','info');
+}
+function setStatus(m){document.getElementById('statusLeft').textContent=m;}
+function updateCursor(){
+  const s=window.getSelection();
+  if(s&&s.focusNode){
+    const lines=document.getElementById('codeEditor').querySelectorAll('.code-line');
+    let ln=1;
+    lines.forEach((el,i)=>{if(el.contains(s.focusNode))ln=i+1;});
+    document.getElementById('statusCursor').textContent=`Ln ${ln}, Col ${s.focusOffset+1}`;
+  }
+}
+
+// ══════════════════════════════════════
+// POPUP
+// ══════════════════════════════════════
+let popupTimerID=null;
+function showPopup(){
+  document.getElementById('popupOverlay').classList.add('visible');
+  document.getElementById('popupList').innerHTML='';
+  document.getElementById('popupSlider').value=0;
+  document.getElementById('sliderVal').textContent='0%';
+  document.getElementById('progressInner').style.width='0%';
+  document.getElementById('popupStatus').textContent='Running…';
+  document.getElementById('popupStatusLight').style.background='#0f0';
+  // set title from properties
+  const sel=document.getElementById('propsSelector').value;
+  const formTitle=(sel==='form1'&&document.querySelector('#propsTable .props-val input[type=text]'))||null;
+  document.getElementById('popupWinTitle').textContent='Form1';
+  // start clock
+  popupTimerID=setInterval(()=>{
+    document.getElementById('popupTime').textContent='Uptime: '+new Date().toLocaleTimeString('sv-SE');
+  },1000);
+  log('Form1 initialized','dim');
+  switchPopupTab(document.querySelector('.popup-tab'),'ptab-main');
+}
+function closePopup(){
+  document.getElementById('popupOverlay').classList.remove('visible');
+  if(popupTimerID){clearInterval(popupTimerID);popupTimerID=null;}
+  log('Form1 closed – application exited with code 0','dim');
+  setStatus('Ready');
+}
+function popupAdd(){
+  const name=document.getElementById('popupName').value||'(empty)';
+  const msg=document.getElementById('popupMsg').value||'(no message)';
+  const bold=document.getElementById('chkBold').checked;
+  const list=document.getElementById('popupList');
+  const item=document.createElement('div');
+  item.className='win-list-item';
+  item.innerHTML=bold?`<b>${name}: ${msg}</b>`:`${name}: ${msg}`;
+  item.onclick=function(){
+    document.querySelectorAll('.win-list-item').forEach(i=>i.classList.remove('sel'));
+    this.classList.add('sel');
+    document.getElementById('popupStatus').textContent='Selected: '+this.textContent;
+  };
+  list.appendChild(item);
+  document.getElementById('popupStatus').textContent=`Added: "${name}"`;
+  log(`Added item: "${name}: ${msg}"`, 'info');
+}
+function popupClear(){
+  document.getElementById('popupList').innerHTML='';
+  document.getElementById('popupStatus').textContent='List cleared';
+  log('List cleared','info');
+}
+function popupSubmit(){
+  const name=document.getElementById('popupName').value;
+  if(!name){document.getElementById('popupStatus').textContent='Error: Name is empty!';return;}
+  const mode=document.querySelector('input[name=mode]:checked').value;
+  log(`Submitted – Name="${name}" Mode=${mode}`,'success');
+  document.getElementById('popupStatus').textContent=`OK – "${name}" submitted!`;
+  document.getElementById('popupStatusLight').style.background='#4ec9b0';
+  setTimeout(closePopup,1200);
+}
+function popupRun(){document.getElementById('popupStatus').textContent='Running job…';}
+function popupStop(){document.getElementById('popupStatus').textContent='Stopped.';}
+function updateSlider(v){
+  document.getElementById('sliderVal').textContent=v+'%';
+  document.getElementById('progressInner').style.width=v+'%';
+}
+
+// Popup tabs
+function switchPopupTab(el,target){
+  document.querySelectorAll('.popup-tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.popup-tab-content').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById(target).classList.add('active');
+}
+
+// Counter tab
+function counterAdd(n){
+  counterVal=Math.max(0,counterVal+n);
+  document.getElementById('counterDisplay').textContent=String(counterVal).padStart(3,'0');
+  const lg=document.getElementById('counterLog');
+  const e=document.createElement('div');
+  e.textContent=(n>0?'+':'')+n+' → '+counterVal;
+  lg.appendChild(e);lg.scrollTop=lg.scrollHeight;
+}
+function counterReset(){counterVal=0;document.getElementById('counterDisplay').textContent='000';}
+
+// Color palette tab
+function initColors(){
+  const colors=['#FF0000','#FF8000','#FFFF00','#80FF00','#00FF00','#00FF80','#00FFFF','#0080FF','#0000FF','#8000FF','#FF00FF','#FF0080','#FFFFFF','#C0C0C0','#808080','#404040','#000000','#804000','#008080','#800080'];
+  const pal=document.getElementById('colorPalette');
+  const bgPal=document.getElementById('bgPalette');
+  colors.forEach(c=>{
+    const s=document.createElement('span');
+    s.className='color-swatch';s.style.background=c;s.title=c;
+    s.onclick=()=>{
+      document.getElementById('colorPreview').style.background=c;
+      document.getElementById('colorHex').textContent=c.toUpperCase();
+    };
+    pal.appendChild(s);
+    const b=document.createElement('span');
+    b.className='color-swatch';b.style.background=c;b.title=c;
+    b.onclick=()=>{document.getElementById('popupWin').style.background=c;};
+    bgPal.appendChild(b);
+  });
+}
+
+// Drag popup
+(function(){
+  let ox=0,oy=0,dragging=false;
+  const tb=document.getElementById('popupTitlebar');
+  const win=document.getElementById('popupWin');
+  tb.addEventListener('mousedown',e=>{
+    if(e.target.classList.contains('ptb'))return;
+    dragging=true;
+    const r=win.getBoundingClientRect();
+    ox=e.clientX-r.left;oy=e.clientY-r.top;
+    win.style.position='fixed';win.style.margin='0';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove',e=>{
+    if(!dragging)return;
+    win.style.left=(e.clientX-ox)+'px';win.style.top=(e.clientY-oy)+'px';
+  });
+  document.addEventListener('mouseup',()=>{dragging=false;});
+})();
+
+// ══════════════════════════════════════
+// MENU / CTX
+// ══════════════════════════════════════
+function toggleMenu(el,id){
+  const was=el.classList.contains('open');
+  closeMenus();if(!was)el.classList.add('open');
+}
+function closeMenus(){
+  document.querySelectorAll('.menubar-item').forEach(m=>m.classList.remove('open'));
+}
+document.addEventListener('click',e=>{
+  if(!e.target.closest('.menubar-item'))closeMenus();
+  if(!e.target.closest('#ctxMenu')&&!e.target.closest('#codeEditor'))hideCtx();
+});
+document.getElementById('codeEditor').addEventListener('contextmenu',e=>{
+  e.preventDefault();
+  const ctx=document.getElementById('ctxMenu');
+  ctx.style.left=e.clientX+'px';ctx.style.top=e.clientY+'px';
+  ctx.classList.add('visible');
+});
+function hideCtx(){document.getElementById('ctxMenu').classList.remove('visible');}
+
+function togglePanel(id){
+  const el=document.getElementById(id);
+  el.style.display=el.style.display==='none'?'flex':'none';
+  closeMenus();
+}
+function switchBottomTab(el,mode){
+  document.querySelectorAll('.bottom-tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+}
+function switchBottomTabById(id){
+  const el=document.getElementById('btab-'+id);
+  if(el){document.querySelectorAll('.bottom-tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');}
+  closeMenus();
+}
+function selectSolItem(el){
+  document.querySelectorAll('.sol-item').forEach(i=>i.classList.remove('selected'));
+  el.classList.add('selected');
+}
+function saveFile(){
+  closeMenus();log(`Saved ${currentFile}`,'success');setStatus('Ready');
+}
+function newFile(){
+  closeMenus();log('New file created','info');
+}
+function handleKey(e){
+  if(e.key==='F5'){e.preventDefault();startDebug();}
+  if(e.ctrlKey&&e.key==='s'){e.preventDefault();saveFile();}
+  if(e.ctrlKey&&e.shiftKey&&e.key==='B'){e.preventDefault();buildSolution();}
+}
+
+// ══════════════════════════════════════
+// INIT
+// ══════════════════════════════════════
+renderCode('Form1.cs');
+renderProps('button1','props');
+initColors();
+log('Microsoft Visual Studio 2019 (Simulated)','dim');
+log('Loading solution: RunSpaceApp.sln…','dim');
+setTimeout(()=>log('Solution loaded successfully.','success'),400);
+setTimeout(()=>log('Ready','dim'),600);
+</script>
+  <script src="/terminal.js"></script>
+</body>
+</html>

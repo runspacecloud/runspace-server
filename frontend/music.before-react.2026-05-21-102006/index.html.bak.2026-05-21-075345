@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RunSpace • Music</title>
+  <!--
+    NOTE:  
+    – Det mesta av logiken (IndexedDB, uppspelning, API‑anrop osv.) finns redan i din befintliga JS‑fil.
+    – Den här filen fokuserar därför på **struktur & utseende**.  
+    – Behåll dina egna <script>‑taggar längst ned i <body>; flytta gärna funktioner till separata modules om du vill.
+  -->
+<link rel="stylesheet" href="/music.css" />
+  <style>
+    /* Bas‑variabler (mörkt tema) */
+    :root {
+      --bg: #0a0f1a;
+      --surface-1: #111827;
+      --surface-2: #1e293b;
+      --border: rgba(255, 255, 255, 0.08);
+      --accent: #5865f2;
+      --text-primary: #e5e7eb;
+      --text-secondary: #9ca3af;
+      --text-muted: #6b7280;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
+      height: 100%;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      overflow: hidden;
+    }
+
+    /* ───────── TOPBAR ───────── */
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 0 24px;
+      height: 56px;
+      background: var(--surface-1);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .topbar__logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      text-decoration: none;
+      color: var(--text-primary);
+    }
+
+    .topbar__logo svg {
+      width: 26px;
+      height: 26px;
+      fill: var(--accent);
+    }
+
+    .topbar__search {
+      flex: 1;
+      position: relative;
+    }
+
+    .topbar__search input {
+      width: 100%;
+      padding: 9px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text-primary);
+    }
+
+    .topbar__user {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--surface-2);
+    }
+
+    /* ───────── LAYOUT ───────── */
+    .layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      height: calc(100% - 56px); /* topbar höjd */
+    }
+
+    /* ─── SIDOBAR (NAV) ─── */
+    .nav {
+      background: var(--surface-1);
+      border-right: 1px solid var(--border);
+      padding: 20px 16px;
+      overflow-y: auto;
+    }
+
+    .nav__title {
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+
+    .nav__list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .nav__item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text-primary);
+    }
+
+    .nav__item:hover,
+    .nav__item.active {
+      background: var(--surface-2);
+    }
+
+    .nav__create {
+      margin-top: 20px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface-2);
+      color: var(--text-primary);
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    /* ─── MAIN CONTENT ─── */
+    .content {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .scroll-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 32px 96px; /* 96px för player‑bar */
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    .greeting {
+      font-size: 24px;
+      font-weight: 800;
+    }
+
+    /* Sektioners rubriker */
+    .section__title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    /* Horisontellt kort‑scroll */
+    .card‑row {
+      display: flex;
+      gap: 14px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+
+    .card {
+      min-width: 120px;
+      height: 120px;
+      background: var(--surface-2);
+      border-radius: 12px;
+      flex-shrink: 0;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      text-align: center;
+      padding: 6px;
+    }
+
+    /* Playlist‑tabell */
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .table thead {
+      font-size: 12px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .table th,
+    .table td {
+      padding: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .table tr:hover {
+      background: var(--surface-2);
+    }
+
+    /* ─── PLAYER BAR ─── */
+    .player {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 72px;
+      background: var(--surface-1);
+      border-top: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: 320px 1fr 220px;
+      align-items: center;
+      padding: 0 24px;
+      gap: 18px;
+    }
+
+    .now__thumb {
+      width: 48px;
+      height: 48px;
+      border-radius: 8px;
+      background: var(--surface-2);
+      flex-shrink: 0;
+    }
+
+    .now__info {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .now__title {
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .now__artist {
+      font-size: 12px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .controls {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ctrl__row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .ctrl__btn {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      cursor: pointer;
+    }
+
+    .ctrl__btn.play {
+      width: 44px;
+      height: 44px;
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .progress {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .progress__bar {
+      flex: 1;
+      height: 6px;
+      background: var(--surface-2);
+      border-radius: 999px;
+      position: relative;
+      cursor: pointer;
+    }
+
+    .progress__fill {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      border-radius: inherit;
+    }
+
+    .volume {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .volume input[type="range"] {
+      width: 120px;
+      accent-color: var(--accent);
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.03);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(88, 101, 242, 0.45);
+      border-radius: 999px;
+      border: 2px solid var(--bg);
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(88, 101, 242, 0.6);
+    }
+  </style>
+</head>
+<body>
+  <!-- ───────── TOPBAR ───────── -->
+  <header class="topbar">
+    <a href="/" class="topbar__logo">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" opacity="0.15" /><path d="M8 12a4 4 0 1 0 8 0 4 4 0 0 0-8 0z"/></svg>
+      RunSpace <span style="color: var(--text-muted); font-weight: 600;">/ Music</span>
+    </a>
+
+    <div class="topbar__search">
+      <input type="text" id="global-search" placeholder="Sök efter musik (YouTube, Spotify, etc.)" />
+    </div>
+
+    <!-- Placeholder för notiser / user‑avatar -->
+    <div class="topbar__user" title="Profil"></div>
+  </header>
+
+  <!-- ───────── LAYOUT ───────── -->
+  <div class="layout">
+    <!-- ── SIDEBAR ── -->
+    <aside class="nav" id="nav-sidebar">
+      <h2 class="nav__title">Bibliotek</h2>
+      <ul class="nav__list" id="playlist-list">
+        <li class="nav__item">
+          <span>Playlists</span>
+        </li>
+        <li class="nav__item">
+          <span>Likeade sånger</span>
+        </li>
+        <li class="nav__item">
+          <span>Lokala filer</span>
+        </li>
+        <li class="nav__item active">
+          <span>Huvudspellista</span>
+        </li>
+        <!-- Dynamiskt genererade spellistor kommer här -->
+      </ul>
+
+      <div class="nav__create">
+        <button class="btn primary" id="btn-create-playlist">Skapa</button>
+      </div>
+    </aside>
+
+    <!-- ── MAIN CONTENT ── -->
+    <main class="content">
+      <div class="scroll-area">
+        <!-- Hälsning -->
+        <h1 class="greeting" id="greeting">Välkommen tillbaka, <span id="username">[Användarnamn]</span>!</h1>
+
+        <!-- Nyligen spelat -->
+        <section>
+          <h3 class="section__title">Nyligen spelat</h3>
+          <div class="card‑row" id="recent-row">
+            <!-- Kort genereras här via JS -->
+          </div>
+        </section>
+
+        <!-- Trendar just nu -->
+        <section>
+          <h3 class="section__title">Trendar just nu</h3>
+          <div class="card‑row" id="trending-row">
+            <!-- Kort genereras här -->
+          </div>
+        </section>
+
+        <!-- Spellista -->
+        <section>
+          <div class="section__title" style="display:flex;align-items:center;justify-content:space-between;">
+            <span>Huvudspellista: <span id="playlist-count">0 spår</span></span>
+            <button class="ctrl__btn" id="playlist‑menu" title="Spellista‑meny">⋯</button>
+          </div>
+          <table class="table" id="track-table">
+            <thead>
+              <tr>
+                <th style="width:36px;"></th>
+                <th>Titel</th>
+                <th>Source</th>
+                <th style="width:60px; text-align:right;">Tid</th>
+                <th style="width:36px;"></th>
+              </tr>
+            </thead>
+            <tbody id="track-tbody">
+              <!-- Rader genereras via JS -->
+            </tbody>
+          </table>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <!-- ───────── PLAYER BAR ───────── -->
+  <footer class="player" id="player-bar">
+    <!-- Now playing -->
+    <div style="display:flex;align-items:center;gap:12px;min-width:0;">
+      <div class="now__thumb" id="now-thumb"></div>
+      <div class="now__info">
+        <span class="now__title" id="now-title">No track selected</span>
+        <span class="now__artist" id="now-artist">—</span>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <div class="ctrl__row">
+        <button class="ctrl__btn" id="btn-prev" title="Föregående">⏮</button>
+        <button class="ctrl__btn play" id="btn-play" title="Play/Pause">▶</button>
+        <button class="ctrl__btn" id="btn-next" title="Nästa">⏭</button>
+      </div>
+      <div class="progress" id="progress-area">
+        <span id="time-current" style="font-size:12px;">0:00</span>
+        <div class="progress__bar" id="progress-bar">
+          <div class="progress__fill" id="progress-fill"></div>
+        </div>
+        <span id="time-total" style="font-size:12px;">0:00</span>
+      </div>
+    </div>
+
+    <!-- Volume -->
+    <div class="volume">
+      <span>🔊</span>
+      <input type="range" id="volume-slider" min="0" max="100" value="80" />
+    </div>
+  </footer>
+
+  <!--
+    Här nedan kan du inkludera dina befintliga <script>-taggar som redan hanterar:
+      • IndexedDB‑hantering
+      • YouTube / Spotify embed & uppspelning
+      • Event‑bindningar (click, drag‑drop etc.)
+    Exempel
+      <script src="/music-core.js" defer></script>
+  -->
+
+  <script src="script.js?v=7" defer></script>
+</body>
+</html>

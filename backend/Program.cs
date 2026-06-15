@@ -19,7 +19,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://0.0.0.0:5000");
+builder.WebHost.UseUrls("http://127.0.0.1:5000");
 
 builder.WebHost.ConfigureKestrel(options =>
 {
@@ -1082,6 +1082,7 @@ app.MapGet("/api/profile/public/{username}", (string username, HttpContext ctx) 
     var ca = r.IsDBNull(3) ? "" : r.GetString(3);
     var _isSusp = !r.IsDBNull(8) && r.GetInt32(8) == 1;
     var _uname=r.GetString(0);var _bio=r.IsDBNull(1)?"":r.GetString(1);var _av=r.IsDBNull(2)?"":r.GetString(2);var _stat=r.IsDBNull(4)?"verified":r.GetString(4);var _badges=r.IsDBNull(5)?"[]":r.GetString(5);var _links=r.IsDBNull(6)?"[]":r.GetString(6);var _banner=r.IsDBNull(7)?"":r.GetString(7);
+    var _premiumState = PremiumAccess.GetForUsername(_uname);
     r.Close();
     // Check trust level separately
     using var trustCmd = db.CreateCommand();
@@ -1108,7 +1109,7 @@ app.MapGet("/api/profile/public/{username}", (string username, HttpContext ctx) 
         _premiumPlan = premR.IsDBNull(1) ? "" : premR.GetString(1);
     }
     premR.Close();
-    return Results.Ok(new { username = _uname, bio = InputSanitizer.SanitizeOutput(_bio), avatarUrl = InputSanitizer.SanitizeUrl(_av), createdAt = ca, age = AppHelpers.GetAgeTextFromCreatedAt(ca), status = _stat, badges = AppHelpers.ParseBadges(_badges), links = _links, bannerUrl = _banner, isSuspended = _isSusp, isRestricted = _isRestricted, publicId = _publicId, isPremium = _isPremium, premiumPlan = _premiumPlan });
+    return Results.Ok(new { username = _uname, bio = InputSanitizer.SanitizeOutput(_bio), avatarUrl = InputSanitizer.SanitizeUrl(_av), createdAt = ca, age = AppHelpers.GetAgeTextFromCreatedAt(ca), status = _stat, badges = AppHelpers.ParseBadges(_badges), links = _links, bannerUrl = _banner, isSuspended = _isSusp, isRestricted = _isRestricted, publicId = _publicId, isPremium = _premiumState.IsPremium, premiumPlan = _premiumState.Plan });
 });
 
 app.MapPost("/api/profile/update", async (HttpContext ctx) =>
@@ -1166,6 +1167,14 @@ app.MapPost("/api/profile/banner/upload", async (HttpContext ctx) =>
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
     if (!ctx.Request.HasFormContentType) return Results.BadRequest(new { error = "form-data krävs" });
+    if (!PremiumAccess.HasFeature(u, "profile_banner"))
+        return Results.Json(new
+        {
+            error = "premium_required",
+            message = "Profile banners require RunSpace Premium.",
+            requiredPlan = "premium"
+        }, statusCode: 403);
+
     var form = await ctx.Request.ReadFormAsync(); var file = form.Files["banner"];
     if (file == null || file.Length == 0 || file.Length > 8 * 1024 * 1024) return Results.BadRequest(new { error = "Fil saknas eller för stor (max 8MB)." });
     var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
@@ -6816,6 +6825,15 @@ app.MapPost("/api/music/recent", async (HttpContext ctx) =>
     cmd.ExecuteNonQuery();
     return Results.Ok();
 });
+
+
+// RunSpace Premium billing
+BillingEndpoints.EnsureBillingTables();
+BillingEndpoints.Map(app);
+
+
+// RunSpace Premium feature access
+PremiumFeatureEndpoints.Map(app);
 
 app.Run();
 

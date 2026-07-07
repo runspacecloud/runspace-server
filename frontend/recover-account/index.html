@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Recover Account · RunSpace</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg:#050914;
+      --card:#0b1220;
+      --line:rgba(148,163,184,.22);
+      --text:#e5eefc;
+      --muted:#8fa3bd;
+      --blue:#60a5fa;
+      --green:#22c55e;
+      --red:#fca5a5;
+    }
+    * { box-sizing:border-box; }
+    body {
+      margin:0;
+      min-height:100vh;
+      display:grid;
+      place-items:center;
+      background:
+        radial-gradient(circle at 20% 10%, rgba(96,165,250,.18), transparent 32%),
+        radial-gradient(circle at 80% 20%, rgba(34,197,94,.10), transparent 28%),
+        var(--bg);
+      color:var(--text);
+      font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      padding:24px;
+    }
+    .wrap { width:100%; max-width:520px; }
+    .brand {
+      display:flex;
+      align-items:center;
+      gap:10px;
+      margin-bottom:18px;
+      color:var(--muted);
+      font-size:14px;
+    }
+    .dot {
+      width:12px;
+      height:12px;
+      border-radius:999px;
+      background:var(--blue);
+      box-shadow:0 0 26px rgba(96,165,250,.85);
+    }
+    .card {
+      background:rgba(11,18,32,.88);
+      border:1px solid var(--line);
+      border-radius:22px;
+      padding:26px;
+      box-shadow:0 24px 80px rgba(0,0,0,.35);
+      backdrop-filter:blur(18px);
+    }
+    h1 {
+      margin:0 0 8px;
+      font-size:30px;
+      letter-spacing:-.04em;
+    }
+    p {
+      color:var(--muted);
+      line-height:1.55;
+      margin:0 0 20px;
+    }
+    label {
+      display:block;
+      margin:16px 0 7px;
+      color:#cbd5e1;
+      font-size:14px;
+    }
+    input {
+      width:100%;
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:13px 14px;
+      background:#07111f;
+      color:var(--text);
+      outline:none;
+      font-size:15px;
+    }
+    input:focus {
+      border-color:rgba(96,165,250,.75);
+      box-shadow:0 0 0 4px rgba(96,165,250,.12);
+    }
+    button {
+      width:100%;
+      margin-top:18px;
+      border:0;
+      border-radius:14px;
+      padding:13px 16px;
+      background:linear-gradient(135deg,#60a5fa,#3b82f6);
+      color:white;
+      font-weight:700;
+      cursor:pointer;
+    }
+    button.secondary {
+      display:none;
+      background:#111827;
+      border:1px solid var(--line);
+    }
+    button:disabled {
+      opacity:.65;
+      cursor:not-allowed;
+    }
+    .status {
+      min-height:24px;
+      color:var(--muted);
+      margin-top:15px;
+      font-size:14px;
+      line-height:1.5;
+    }
+    .warning {
+      border:1px solid rgba(251,191,36,.25);
+      background:rgba(251,191,36,.07);
+      color:#fde68a;
+      border-radius:14px;
+      padding:12px;
+      font-size:13px;
+      line-height:1.45;
+      margin-bottom:18px;
+    }
+    .links {
+      margin-top:16px;
+      display:flex;
+      justify-content:space-between;
+      gap:12px;
+      font-size:14px;
+    }
+    a { color:#93c5fd; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="brand"><span class="dot"></span><span>RunSpace Account Recovery</span></div>
+
+    <section class="card">
+      <h1>Recover account</h1>
+      <p>Use one Account Recovery Code to create a new encrypted .key file. Your old Account Key will stop working.</p>
+
+      <div class="warning">
+        Use this only if you lost your Account Key or .key file. Recovery codes are not normal login codes and not 2FA codes.
+      </div>
+
+      <form id="recover-form">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required placeholder="mxssy">
+
+        <label for="recovery-code">Recovery code</label>
+        <input id="recovery-code" name="recovery-code" required spellcheck="false" autocomplete="one-time-code" placeholder="rsr-xxxx-xxxx-xxxx-xxxx">
+
+        <label for="passphrase">New .key file passphrase</label>
+        <input id="passphrase" name="passphrase" type="password" autocomplete="new-password" required minlength="8" placeholder="Minimum 8 characters">
+
+        <label for="passphrase2">Repeat passphrase</label>
+        <input id="passphrase2" name="passphrase2" type="password" autocomplete="new-password" required minlength="8">
+
+        <button id="btn-recover" type="submit">Recover account and download new .key</button>
+        <button id="btn-download-again" type="button" class="secondary">Download .key again</button>
+      </form>
+
+      <div class="status" id="status"></div>
+
+      <div class="links">
+        <a href="/login/">Back to login</a>
+        <a href="/unlock/">Open .key viewer</a>
+      </div>
+    </section>
+  </main>
+
+  <script src="script.js?v=recovery-flow1"></script>
+</body>
+</html>

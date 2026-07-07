@@ -255,6 +255,62 @@ CREATE TABLE IF NOT EXISTS ServerForbiddenWords (
     static void SetCols(string serverId, Dictionary<string, object> cols)
     {
         if (!cols.Any()) return;
+
+        // rs-sql-defensive-v2-allowed-settings-columns
+        // Defensive SQL rule: dictionary keys may only become SQL column names
+        // if they are from this hardcoded allowlist.
+        var allowedColumns = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal)
+        {
+            "AccentColor",
+            "AllowFileUploads",
+            "AllowedFileTypes",
+            "AuditLogEnabled",
+            "AutoCleanupDays",
+            "AutoDeleteMessagesDays",
+            "AutoModLevel",
+            "BlockFlaggedMessages",
+            "Category",
+            "DefaultChannelId",
+            "DefaultRoleId",
+            "DisableEmbeds",
+            "DisableLinkPreviews",
+            "FilterInvites",
+            "FilterLinks",
+            "ForbiddenWords",
+            "InvitesOpenToAll",
+            "IsPublic",
+            "LogBans",
+            "LogEdits",
+            "LogFileUploads",
+            "LogJoinsLeaves",
+            "LogMessages",
+            "MaxFileSizeMb",
+            "MaxMentionsPerMessage",
+            "NoMessageLogging",
+            "RaidProtectionEnabled",
+            "RaidProtectionUntil",
+            "RateLimitPerMinute",
+            "Require2FA",
+            "RequireEmailVerified",
+            "RetentionDays",
+            "RulesChannelId",
+            "SlowModeSeconds",
+            "SystemChannelId",
+            "Tags",
+            "TotalStorageLimitMb",
+            "UsersCanCreateChannels",
+            "UsersCanCreateInvites",
+            "UsersCanPingEveryone",
+            "UsersCanSendFiles",
+            "WelcomeMessage"
+        };
+
+        foreach (var key in cols.Keys)
+        {
+            if (!allowedColumns.Contains(key))
+                throw new InvalidOperationException("Invalid server settings column.");
+        }
+
         EnsureDefaults(serverId);
         using var db = DbHelpers.OpenDb();
         using var c = db.CreateCommand();

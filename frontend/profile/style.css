@@ -214,3 +214,78 @@ a{color:inherit;text-decoration:none}
   .site-footer{flex-direction:column;gap:10px;padding:20px;text-align:center}
   .banner{height:140px}
 }
+
+.verified-check{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  margin-left:8px;
+  width:18px;
+  height:18px;
+  border-radius:50%;
+  background:#3b7dff;
+  color:white;
+  font-size:12px;
+  font-weight:900;
+  vertical-align:middle;
+}
+
+.role-badge{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:5px 9px;
+  border-radius:8px;
+  background:rgba(59,125,255,.10);
+  border:1px solid rgba(59,125,255,.35);
+  color:#cfe0ff;
+  font-weight:700;
+}
+.role-badge svg{
+  width:14px;
+  height:14px;
+  fill:currentColor;
+  flex:none;
+}
+.role-owner{color:#ff6b6b;border-color:rgba(255,107,107,.45);background:rgba(255,107,107,.10)}
+.role-founder{color:#ffd166;border-color:rgba(255,209,102,.45);background:rgba(255,209,102,.10)}
+.role-visionary{color:#a78bfa;border-color:rgba(167,139,250,.45);background:rgba(167,139,250,.10)}
+.role-developer{color:#c084fc;border-color:rgba(192,132,252,.45);background:rgba(192,132,252,.10)}
+.role-moderator{color:#60a5fa;border-color:rgba(96,165,250,.45);background:rgba(96,165,250,.10)}
+.role-architect{color:#67e8f9;border-color:rgba(103,232,249,.45);background:rgba(103,232,249,.10)}
+.role-bug-hunter{color:#34d399;border-color:rgba(52,211,153,.45);background:rgba(52,211,153,.10)}
+.role-early-supporter{color:#fb7185;border-color:rgba(251,113,133,.45);background:rgba(251,113,133,.10)}
+
+.team-badge{
+  color:#ffffff;
+  border-color:rgba(59,125,255,.65);
+  background:linear-gradient(135deg, rgba(59,125,255,.35), rgba(37,99,235,.12));
+  box-shadow:0 0 18px rgba(59,125,255,.18);
+}
+.team-badge svg{
+  width:15px;
+  height:15px;
+  fill:currentColor;
+}
+
+.role-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:8px;background:rgba(59,125,255,.10);border:1px solid rgba(59,125,255,.35);color:#cfe0ff;font-weight:700}
+.role-badge svg{width:14px;height:14px;fill:currentColor;flex:none}
+.team-badge{color:#fff;border-color:rgba(59,125,255,.65);background:linear-gradient(135deg,rgba(59,125,255,.35),rgba(37,99,235,.12));box-shadow:0 0 18px rgba(59,125,255,.18)}
+.role-owner{color:#ff6b6b;border-color:rgba(255,107,107,.45);background:rgba(255,107,107,.10)}
+.role-developer{color:#c084fc;border-color:rgba(192,132,252,.45);background:rgba(192,132,252,.10)}
+
+.more-badges{
+  color:#9fb3d1;
+  background:rgba(148,163,184,.08);
+  border-color:rgba(148,163,184,.25);
+  cursor:pointer;
+}
+.more-badges:hover{
+  color:#ffffff;
+  background:rgba(148,163,184,.14);
+}
+
+button.more-badges{
+  font-family:inherit;
+  appearance:none;
+}

@@ -535,6 +535,211 @@
     });
   }
 
+
+
+  function initSimple2FA() {
+    var btn = document.getElementById('btn-tfa-toggle');
+    if (!btn) return;
+
+    btn.addEventListener('click', async function () {
+      try {
+        var meRes = await fetch('/api/me', { credentials: 'include' });
+        var me = await meRes.json();
+
+        if (me.twoFactorEnabled) {
+          var code = prompt('2FA is enabled. Enter current 6-digit code to disable 2FA:');
+          if (!code) return;
+
+          var dis = await fetch('/api/auth/2fa/disable', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: code.trim() })
+          });
+
+          var disData = await dis.json().catch(function(){ return {}; });
+          if (!dis.ok || !disData.success) throw new Error(disData.message || 'Could not disable 2FA.');
+
+          alert('2FA disabled.');
+          location.reload();
+          return;
+        }
+
+        if (!confirm('Start 2FA setup?')) return;
+
+        var setup = await fetch('/api/auth/2fa/setup', {
+          method: 'POST',
+          credentials: 'include'
+        });
+
+        var data = await setup.json();
+        if (!setup.ok) throw new Error(data.message || 'Could not start 2FA setup.');
+
+        var codes = Array.isArray(data.backupCodes) ? data.backupCodes.join('\n') : '';
+
+        var w = window.open('', '_blank');
+        if (w) {
+          w.document.write(
+            '<title>RunSpace 2FA Setup</title>' +
+            '<body style="background:#050914;color:#e5eefc;font-family:sans-serif;padding:24px">' +
+            '<h1>RunSpace 2FA Setup</h1>' +
+            '<p>Scan this QR code in your authenticator app.</p>' +
+            '<img style="background:white;padding:12px;border-radius:16px;width:220px;height:220px" src="data:image/png;base64,' + data.qrPngBase64 + '">' +
+            '<h3>Manual secret</h3><pre style="white-space:pre-wrap;background:#07111f;padding:12px;border-radius:12px">' + data.secret + '</pre>' +
+            '<h3>2FA backup codes</h3><p>Save these now. They are shown only once.</p>' +
+            '<textarea readonly style="width:100%;height:220px;background:#07111f;color:#e5eefc;border:1px solid rgba(148,163,184,.35);border-radius:12px;padding:12px;font-family:monospace;white-space:pre">' + codes + '</textarea>' +
+            '<p style="color:#fbbf24">Save these now. Do not share them. They are shown only once.</p>' +
+            '</body>'
+          );
+          w.document.close();
+        } else {
+          alert('QR popup was blocked. Manual secret:\\n\\n' + data.secret + '\\n\\nBackup codes:\\n' + codes);
+        }
+
+        var verifyCode = prompt('Enter the 6-digit code from your authenticator app:');
+        if (!verifyCode) return;
+
+        var verify = await fetch('/api/auth/2fa/verify', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: verifyCode.trim() })
+        });
+
+        var verifyData = await verify.json().catch(function(){ return {}; });
+        if (!verify.ok || !verifyData.success) throw new Error(verifyData.message || 'Could not activate 2FA.');
+
+        alert('2FA enabled. Save your backup codes before closing the popup.');
+        location.reload();
+      } catch (err) {
+        alert(err.message || '2FA failed.');
+      }
+    });
+  }
+
+  function initAccountRecovery() {
+    var btnGen = document.getElementById('btn-gen-recovery');
+    var btnView = document.getElementById('btn-view-recovery');
+    var btnDownload = document.getElementById('btn-download-recovery');
+    var status = document.getElementById('recovery-status');
+    var output = document.getElementById('recovery-codes-output');
+
+    function setStatus(text, color) {
+      if (!status) return;
+      status.textContent = text;
+      if (color) status.style.color = color;
+    }
+
+    function downloadRecoveryCodesFile() {
+      if (!output || !output.value.trim()) {
+        alert('No recovery codes to download. Generate new codes first.');
+        return;
+      }
+
+      var content = [
+        'RunSpace Account Recovery Codes',
+        'Generated: ' + new Date().toISOString(),
+        '',
+        'These are one-time recovery codes for your RunSpace account.',
+        'Use them only if you lose your Account Key or .key file.',
+        'Store this file somewhere safe. Anyone with these codes may be able to recover your account.',
+        '',
+        output.value.trim(),
+        ''
+      ].join('\n');
+
+      var blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+
+      var date = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = 'runspace-account-recovery-codes-' + date + '.txt';
+
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      URL.revokeObjectURL(url);
+    }
+
+    function loadStatus() {
+      fetch('/api/auth/account-recovery/status', {
+        method: 'GET',
+        credentials: 'include'
+      })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+        .then(function (res) {
+          if (!res.ok || !res.data.ok) {
+            setStatus('Could not load recovery status.', '#fca5a5');
+            return;
+          }
+
+          setStatus('Unused recovery codes remaining: ' + res.data.remaining + '/10', '#8fa3bd');
+        })
+        .catch(function () {
+          setStatus('Could not load recovery status.', '#fca5a5');
+        });
+    }
+
+    if (btnView) {
+      btnView.addEventListener('click', function () {
+        loadStatus();
+      });
+    }
+
+    if (btnDownload) {
+      btnDownload.addEventListener('click', function () {
+        downloadRecoveryCodesFile();
+      });
+    }
+
+    if (btnGen) {
+      btnGen.addEventListener('click', function () {
+        if (!confirm('Generate new Account Recovery Codes? Old recovery codes will stop working.')) return;
+
+        setStatus('Generating recovery codes...', '#8fa3bd');
+        if (output) {
+          output.style.display = 'none';
+          output.value = '';
+        }
+        if (btnDownload) {
+          btnDownload.style.display = 'none';
+        }
+
+        fetch('/api/auth/account-recovery/generate', {
+          method: 'POST',
+          credentials: 'include'
+        })
+          .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+          .then(function (res) {
+            if (!res.ok || !res.data.ok) {
+              throw new Error(res.data.message || 'Could not generate recovery codes.');
+            }
+
+            if (output) {
+              output.value = res.data.codes.join('\n');
+              output.style.display = 'block';
+              output.focus();
+              output.select();
+            }
+
+            if (btnDownload) {
+              btnDownload.style.display = 'inline-flex';
+            }
+
+            setStatus('New recovery codes generated. Save them now. They will not be shown again.', '#22c55e');
+            alert('Recovery codes generated. Save them now. They will not be shown again.');
+          })
+          .catch(function (err) {
+            setStatus(err.message || 'Could not generate recovery codes.', '#fca5a5');
+          });
+      });
+    }
+
+    loadStatus();
+  }
+
   function initDanger() {
     var btnLogoutAll = document.getElementById('btn-logout-all');
     if (btnLogoutAll) {
@@ -567,6 +772,150 @@
       });
     }
   }
+
+
+  // ── Account Key ─────────────────────────────────────────────
+  function rsUuidV4() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+
+    var b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+
+    var h = Array.from(b).map(function (x) {
+      return x.toString(16).padStart(2, '0');
+    }).join('');
+
+    return h.slice(0, 8) + '-' +
+           h.slice(8, 12) + '-' +
+           h.slice(12, 16) + '-' +
+           h.slice(16, 20) + '-' +
+           h.slice(20);
+  }
+
+  async function encryptAccountKeyFile(accountKey, passphrase) {
+    var enc = new TextEncoder();
+    var keyData = enc.encode(accountKey);
+    var salt = crypto.getRandomValues(new Uint8Array(16));
+    var iv = crypto.getRandomValues(new Uint8Array(12));
+
+    var baseKey = await crypto.subtle.importKey(
+      'raw',
+      enc.encode(passphrase),
+      { name: 'PBKDF2' },
+      false,
+      ['deriveKey']
+    );
+
+    var aesKey = await crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: salt, iterations: 100000, hash: 'SHA-256' },
+      baseKey,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt']
+    );
+
+    var ciphertext = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv: iv },
+      aesKey,
+      keyData
+    );
+
+    var magic = new Uint8Array([0x52, 0x53, 0x4b, 0x31]); // RSK1
+    var result = new Uint8Array(4 + 16 + 12 + ciphertext.byteLength);
+
+    result.set(magic, 0);
+    result.set(salt, 4);
+    result.set(iv, 20);
+    result.set(new Uint8Array(ciphertext), 32);
+
+    return result;
+  }
+
+  function downloadAccountKeyFile(bytes) {
+    var blob = new Blob([bytes], { type: 'application/octet-stream' });
+    var a = document.createElement('a');
+
+    a.href = URL.createObjectURL(blob);
+    a.download = 'runspace.key';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    setTimeout(function () {
+      URL.revokeObjectURL(a.href);
+    }, 1000);
+  }
+
+  function setAccountKeyStatus(message, color) {
+    var el = document.getElementById('account-key-status');
+    if (!el) return;
+
+    el.textContent = message;
+    if (color) el.style.color = color;
+  }
+
+  function initAccountKeyGenerator() {
+    var btn = document.getElementById('btn-generate-account-key');
+    if (!btn) return;
+
+    btn.addEventListener('click', async function () {
+      var passphrase = prompt('Choose a passphrase for your new .key file. You will need this passphrase when signing in with the file.');
+
+      if (!passphrase) return;
+
+      if (passphrase.length < 6) {
+        setAccountKeyStatus('Passphrase must be at least 6 characters.', '#f59e0b');
+        return;
+      }
+
+      var confirmRotate = confirm(
+        'This will generate a new .key file and deactivate old .key files after activation. Continue?'
+      );
+
+      if (!confirmRotate) return;
+
+      btn.disabled = true;
+      var oldText = btn.textContent;
+      btn.textContent = 'Generating...';
+      setAccountKeyStatus('Generating encrypted key file...', '#8fa3bd');
+
+      try {
+        var newAccountKey = rsUuidV4();
+
+        setAccountKeyStatus('Activating new Account Key on server...', '#8fa3bd');
+
+        var res = await fetch('/api/auth/rotate-account-key', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accountKey: newAccountKey })
+        });
+
+        var data = {};
+        try { data = await res.json(); } catch (e) {}
+
+        if (!res.ok || data.status !== 'ok') {
+          throw new Error(data.message || 'Could not activate new key. No .key file was downloaded.');
+        }
+
+        setAccountKeyStatus('Server accepted new key. Creating encrypted .key file...', '#8fa3bd');
+
+        var encryptedFile = await encryptAccountKeyFile(newAccountKey, passphrase);
+        downloadAccountKeyFile(encryptedFile);
+
+        setAccountKeyStatus('New .key file activated and downloaded. Preview: ' + newAccountKey.slice(0, 8) + '...', '#22c55e');
+        alert('New .key file activated and downloaded. Preview: ' + newAccountKey.slice(0, 8) + '...');
+      } catch (err) {
+        setAccountKeyStatus(err.message || 'Could not generate new key.', '#ef4444');
+        alert(err.message || 'Could not generate new key.');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = oldText;
+      }
+    });
+  }
+
 
   // ── Helpers ────────────────────────────────────────────────
   function setVal(id, val) {
@@ -605,6 +954,9 @@
     initNotificationSettings();
     initAppearanceSettings();
     initDeveloperSettings();
-    initDanger();
+    initAccountKeyGenerator();
+    initSimple2FA();
+    initAccountRecovery();
+  initDanger();
   });
 })();

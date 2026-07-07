@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
   <title>Chat — RunSpace</title>
 
   <link rel="stylesheet" href="style.css">
@@ -50,6 +50,44 @@
       #chat-header { padding-left: 56px; }
     }
   </style>
+
+<style id="rs-mobile-pwa-chat-v1">
+@media (display-mode: standalone), (max-width: 700px) {
+  html, body {
+    width: 100%;
+    height: 100%;
+    min-height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  body {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  input, textarea, button {
+    font-size: 16px !important;
+  }
+
+  textarea {
+    max-height: 140px;
+  }
+
+  .composer,
+  .chat-composer,
+  .message-composer,
+  .input-area,
+  .message-input,
+  #composer,
+  #messageComposer {
+    padding-bottom: max(10px, env(safe-area-inset-bottom)) !important;
+  }
+}
+</style>
+
 </head>
 <body>
 
@@ -220,6 +258,15 @@
 </div>
 
 <script>
+
+// rs-frontend-debug-gate-v1
+window.RS_DEBUG = localStorage.getItem("rs_debug") === "1";
+window.rsDebug = function(){
+  if (window.RS_DEBUG && window.console && console.log) {
+    console.log.apply(console, arguments);
+  }
+};
+
 // Device token
 (function() {
   var tok = localStorage.getItem('rs_device_token');
@@ -362,7 +409,7 @@ async function init() {
     var targetUser = params.get('user');
     if (targetUser) openChat(targetUser);
   } catch(e) {
-    console.error('Init error:', e);
+    rsDebug('Init error');
     window.location.href = '/login.html';
   }
 }
@@ -376,7 +423,7 @@ async function initSignalR() {
   window.connection = connection;
 
   connection.on('LiveCallStatus', function(msg) {
-    console.log('LiveCallStatus:', msg);
+    rsDebug('LiveCallStatus');
 
     if (msg.status === 'in_call') {
       showLiveCallPanel(msg.ticketId, msg.agent || 'support');
@@ -411,7 +458,7 @@ async function initSignalR() {
       );
 
       if (accept) {
-        console.log('Accepted live call:', msg.ticketId);
+        rsDebug('Accepted live call');
 
         fetch('/api/support/live-call/' + encodeURIComponent(msg.ticketId) + '/status', {
           method: 'POST',
@@ -458,9 +505,9 @@ async function initSignalR() {
 
   try {
     await connection.start();
-    console.log('SignalR connected');
+    rsDebug('SignalR connected');
   } catch(e) {
-    console.error('SignalR error:', e);
+    rsDebug('SignalR error');
   }
 }
 
@@ -794,6 +841,10 @@ async function sendMessage() {
   clearReply();
 
   try {
+    if (!myKeyPair) {
+      await initCrypto();
+    }
+
     var enc = await encryptMessage(text, currentPeer);
     await connection.invoke('SendMessage', {
       to: currentPeer,
@@ -815,7 +866,9 @@ async function sendMessage() {
       if (currentPeer) loadHistory(currentPeer);
     }, 250);
   } catch(e) {
-    console.error('Send error:', e);
+    rsDebug('Send error');
+    alert(e && e.message ? e.message : 'Message could not be sent.');
+    if (currentPeer) loadHistory(currentPeer);
   } finally {
     onInputChange();
   }
@@ -1028,148 +1081,369 @@ function scrollToBottom() {
   list.scrollTop = list.scrollHeight;
 }
 
-// Crypto
-async function initCrypto() {
-  try {
-    myDeviceId = localStorage.getItem('rs_device_id');
-    if (!myDeviceId) {
-      myDeviceId = 'web-' + Array.from(crypto.getRandomValues(new Uint8Array(8)))
-        .map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
-      localStorage.setItem('rs_device_id', myDeviceId);
+  // Crypto
+  // Account-level E2EE.
+  // Server stores encrypted private-key envelopes only.
+  // Plain private keys never leave the browser.
+  var ACCOUNT_E2EE_ITERATIONS = 310000;
+
+  function accountDeviceId(username) {
+    return 'account:' + String(username || '').trim().toLowerCase();
+  }
+
+  function bytesToB64(bytes) {
+    var out = '';
+    for (var i = 0; i < bytes.length; i += 0x8000) {
+      out += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(out);
+  }
+
+  function b64ToBytes(b64) {
+    return Uint8Array.from(atob(String(b64 || '')), function(c){ return c.charCodeAt(0); });
+  }
+
+  function getMeUsernameForE2ee() {
+    return String((me && me.username) || '').trim().toLowerCase();
+  }
+
+  function e2eeSessionKey(username) {
+    return 'rs_e2ee_passphrase_' + username;
+  }
+
+  function getCachedE2eePassphrase(username) {
+    try { return sessionStorage.getItem(e2eeSessionKey(username)) || ''; }
+    catch(e) { return ''; }
+  }
+
+  function setCachedE2eePassphrase(username, passphrase) {
+    try { sessionStorage.setItem(e2eeSessionKey(username), passphrase); }
+    catch(e) {}
+  }
+
+  function askE2eePassphrase(username, creating) {
+    var cached = getCachedE2eePassphrase(username);
+    if (cached) return cached;
+
+    var msg = creating
+      ? 'Create a RunSpace encryption passphrase for this account. Save it. Without it, encrypted messages cannot be restored on new devices.'
+      : 'Enter your RunSpace encryption passphrase to unlock encrypted messages for this account.\n\nForgot it? Press Cancel, then open /encryption-reset/.';
+
+    var passphrase = window.prompt(msg);
+    if (!passphrase || passphrase.length < 8) {
+      throw new Error('E2EE passphrase required, minimum 8 characters.');
     }
 
-    var storedPriv = localStorage.getItem('rs_priv_' + myDeviceId);
-    var storedPub = localStorage.getItem('rs_pub_' + myDeviceId);
+    setCachedE2eePassphrase(username, passphrase);
+    return passphrase;
+  }
 
-    if (storedPriv && storedPub) {
-      try {
-        var privJwk = JSON.parse(atob(storedPriv));
-        var pubJwk = JSON.parse(atob(storedPub));
-        var privateKey = await crypto.subtle.importKey('jwk', privJwk, {name:'RSA-OAEP',hash:'SHA-256'}, false, ['decrypt']);
-        var publicKey = await crypto.subtle.importKey('jwk', pubJwk, {name:'RSA-OAEP',hash:'SHA-256'}, true, ['encrypt']);
-        myKeyPair = {privateKey: privateKey, publicKey: publicKey};
-      } catch(e) {
-        storedPriv = null;
+  async function deriveE2eeWrapKey(passphrase, saltBytes, usages) {
+    var enc = new TextEncoder();
+
+    var baseKey = await crypto.subtle.importKey(
+      'raw',
+      enc.encode(passphrase),
+      {name:'PBKDF2'},
+      false,
+      ['deriveKey']
+    );
+
+    return crypto.subtle.deriveKey(
+      {
+        name:'PBKDF2',
+        salt:saltBytes,
+        iterations: ACCOUNT_E2EE_ITERATIONS,
+        hash:'SHA-256'
+      },
+      baseKey,
+      {name:'AES-GCM', length:256},
+      false,
+      usages
+    );
+  }
+
+  async function encryptPrivateJwkForCloud(privateJwk, passphrase) {
+    var salt = crypto.getRandomValues(new Uint8Array(16));
+    var nonce = crypto.getRandomValues(new Uint8Array(12));
+    var wrapKey = await deriveE2eeWrapKey(passphrase, salt, ['encrypt']);
+
+    var plain = new TextEncoder().encode(JSON.stringify(privateJwk));
+    var cipher = await crypto.subtle.encrypt({name:'AES-GCM', iv:nonce}, wrapKey, plain);
+
+    return {
+      encryptedPrivateKey: bytesToB64(new Uint8Array(cipher)),
+      salt: bytesToB64(salt),
+      nonce: bytesToB64(nonce),
+      kdf: 'PBKDF2-SHA256',
+      iterations: ACCOUNT_E2EE_ITERATIONS,
+      version: 1
+    };
+  }
+
+  async function decryptPrivateJwkFromCloud(envelope, passphrase) {
+    var salt = b64ToBytes(envelope.salt);
+    var nonce = b64ToBytes(envelope.nonce);
+    var cipher = b64ToBytes(envelope.encryptedPrivateKey);
+
+    var wrapKey = await deriveE2eeWrapKey(passphrase, salt, ['decrypt']);
+    var plain = await crypto.subtle.decrypt({name:'AES-GCM', iv:nonce}, wrapKey, cipher);
+
+    return JSON.parse(new TextDecoder().decode(plain));
+  }
+
+  async function initCrypto() {
+    try {
+      var username = getMeUsernameForE2ee();
+
+      if (!username) {
+        try {
+          var meResp = await fetch('/api/me', { credentials:'include' });
+          if (meResp.ok) {
+            var meData = await meResp.json();
+            if (meData && meData.username) {
+              if (typeof me === 'object' && me !== null) {
+                Object.assign(me, meData);
+              } else {
+                me = meData;
+              }
+              username = getMeUsernameForE2ee();
+            }
+          }
+        } catch(fetchMeErr) {
+          rsDebug('[E2E] /api/me fallback failed');
+        }
       }
-    }
 
-    if (!storedPriv) {
+      if (!username) {
+        rsDebug('[E2E] account crypto skipped');
+        return;
+      }
+
+      myDeviceId = accountDeviceId(username);
+
+      var r = await fetch('/api/e2ee/account-key', {credentials:'include'});
+      if (!r.ok) {
+        rsDebug('[E2E] account-key fetch failed');
+        return;
+      }
+
+      var data = await r.json();
+
+      if (data.exists) {
+        var passphrase = askE2eePassphrase(username, false);
+        var privateJwk = await decryptPrivateJwkFromCloud(data, passphrase);
+
+        var privateKey = await crypto.subtle.importKey(
+          'jwk',
+          privateJwk,
+          {name:'RSA-OAEP', hash:'SHA-256'},
+          false,
+          ['decrypt']
+        );
+
+        var publicKeyBytes = b64ToBytes(data.publicKey);
+        var publicKey = await crypto.subtle.importKey(
+          'spki',
+          publicKeyBytes,
+          {name:'RSA-OAEP', hash:'SHA-256'},
+          true,
+          ['encrypt']
+        );
+
+        myKeyPair = {privateKey: privateKey, publicKey: publicKey};
+        rsDebug('[E2E] account key unlocked');
+        return;
+      }
+
+      var createPassphrase = askE2eePassphrase(username, true);
+
       myKeyPair = await crypto.subtle.generateKey(
         {name:'RSA-OAEP', modulusLength:2048, publicExponent:new Uint8Array([1,0,1]), hash:'SHA-256'},
         true,
         ['encrypt','decrypt']
       );
-      var privJwk2 = await crypto.subtle.exportKey('jwk', myKeyPair.privateKey);
-      var pubJwk2 = await crypto.subtle.exportKey('jwk', myKeyPair.publicKey);
-      localStorage.setItem('rs_priv_' + myDeviceId, btoa(JSON.stringify(privJwk2)));
-      localStorage.setItem('rs_pub_' + myDeviceId, btoa(JSON.stringify(pubJwk2)));
+
+      var privateJwk2 = await crypto.subtle.exportKey('jwk', myKeyPair.privateKey);
+      var spki = await crypto.subtle.exportKey('spki', myKeyPair.publicKey);
+      var publicKeyB64 = bytesToB64(new Uint8Array(spki));
+      var encryptedEnvelope = await encryptPrivateJwkForCloud(privateJwk2, createPassphrase);
+
+      var save = await fetch('/api/e2ee/account-key', {
+        method:'POST',
+        credentials:'include',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          publicKey: publicKeyB64,
+          encryptedPrivateKey: encryptedEnvelope.encryptedPrivateKey,
+          salt: encryptedEnvelope.salt,
+          nonce: encryptedEnvelope.nonce,
+          kdf: encryptedEnvelope.kdf,
+          iterations: encryptedEnvelope.iterations,
+          version: encryptedEnvelope.version
+        })
+      });
+
+      if (!save.ok) {
+        rsDebug('[E2E] account-key save failed');
+        myKeyPair = null;
+        return;
+      }
+
+      rsDebug('[E2E] account key created');
+    } catch(e) {
+      rsDebug('[E2E] account crypto init failed');
+      myKeyPair = null;
+    }
+  }
+
+  async function loadPeerPublicKeys(peer) {
+    try {
+      var t = String(peer || '').trim().toLowerCase();
+      if (!t) return [];
+
+      var r = await fetch('/api/e2ee/account-public-key/' + encodeURIComponent(t), {credentials:'include'});
+      if (!r.ok) return [];
+
+      var data = await r.json();
+      rsDebug('[E2E] account-public-key response');
+
+      if (!data.exists || !data.publicKey) {
+        peerKeys[t] = [];
+        return [];
+      }
+
+      var keys = [{
+        deviceId: accountDeviceId(t),
+        publicKey: data.publicKey
+      }];
+
+      peerKeys[t] = keys;
+      return keys;
+    } catch(e) {
+      rsDebug('[E2E] load account public key failed');
+      return [];
+    }
+  }
+
+  async function encryptMessage(text, peer) {
+    if (!myKeyPair) {
+      throw new Error('Encryption is not unlocked for this account.');
     }
 
-    var spki = await crypto.subtle.exportKey('spki', myKeyPair.publicKey);
-    var pubB64 = btoa(String.fromCharCode.apply(null, new Uint8Array(spki)));
-    await fetch('/api/chat/device-key', {
-      method:'POST',
-      credentials:'include',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({
-        deviceId: myDeviceId,
-        deviceName: navigator.userAgent.slice(0,50),
-        publicKey: pubB64
-      })
-    });
-  } catch(e) {
-    console.error('[E2E] Crypto init failed:', e);
-  }
-}
+    try {
+      var username = getMeUsernameForE2ee();
+      var keys = await loadPeerPublicKeys(peer);
 
-async function loadPeerPublicKeys(peer) {
-  try {
-    var r = await fetch('/api/chat/public-key/' + encodeURIComponent(peer), {credentials:'include'});
-    if (!r.ok) return [];
-    var data = await r.json();
-    var keys = data.keys || [];
-    if (data.publicKey && keys.length === 0) {
-      keys = [{deviceId:'legacy', publicKey:data.publicKey}];
+      rsDebug('[E2E] encrypt peer');
+
+      if (!keys || keys.length === 0) {
+        rsDebug('[E2E] peer has no account E2EE key yet');
+        throw new Error('This user has not enabled encrypted messaging yet. Ask them to open chat once and create an encryption passphrase.');
+      }
+
+      var aesKey = await crypto.subtle.generateKey({name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
+      var iv = crypto.getRandomValues(new Uint8Array(12));
+      var enc = new TextEncoder();
+
+      var cipher = await crypto.subtle.encrypt({name:'AES-GCM', iv:iv}, aesKey, enc.encode(text));
+      var rawAes = await crypto.subtle.exportKey('raw', aesKey);
+
+      var recipientKeys = [];
+
+      for (var i = 0; i < keys.length; i++) {
+        try {
+          var k = keys[i];
+          var pubKeyBytes = b64ToBytes(k.publicKey);
+          var pubKey = await crypto.subtle.importKey(
+            'spki',
+            pubKeyBytes,
+            {name:'RSA-OAEP', hash:'SHA-256'},
+            false,
+            ['encrypt']
+          );
+
+          var encAes = await crypto.subtle.encrypt({name:'RSA-OAEP'}, pubKey, rawAes);
+
+          recipientKeys.push({
+            deviceId: k.deviceId,
+            encryptedKey: bytesToB64(new Uint8Array(encAes))
+          });
+        } catch(e) {
+          rsDebug('[E2E] failed to encrypt AES key for account');
+        }
+      }
+
+      if (recipientKeys.length === 0) {
+        rsDebug('[E2E] no usable account keys');
+        throw new Error('Could not encrypt this message. No usable account key was found.');
+      }
+
+      var mySpki = await crypto.subtle.exportKey('spki', myKeyPair.publicKey);
+      var myPubKey = await crypto.subtle.importKey(
+        'spki',
+        new Uint8Array(mySpki),
+        {name:'RSA-OAEP', hash:'SHA-256'},
+        false,
+        ['encrypt']
+      );
+
+      var encAesSelf = await crypto.subtle.encrypt({name:'RSA-OAEP'}, myPubKey, rawAes);
+
+      var senderKeys = [{
+        deviceId: accountDeviceId(username),
+        encryptedKey: bytesToB64(new Uint8Array(encAesSelf))
+      }];
+
+      rsDebug('[E2E] account recipientKeys created');
+
+      return {
+        text: bytesToB64(new Uint8Array(cipher)),
+        iv: bytesToB64(iv),
+        algorithm: 'AES-GCM',
+        encrypted: true,
+        recipientKeys: recipientKeys,
+        senderKeys: senderKeys
+      };
+    } catch(e) {
+      rsDebug('[E2E] encrypt failed');
+      throw e;
     }
-    peerKeys[peer] = keys;
-    return keys;
-  } catch(e) {
-    return [];
   }
-}
 
-async function encryptMessage(text, peer) {
-  if (!myKeyPair) return {text:text, encrypted:false};
+  async function decryptMessage(msg) {
+    if (!msg.encrypted) return msg.text || msg.message || '';
+    if (!myKeyPair) return '[encrypted message]';
 
-  try {
-    var keys = peerKeys[peer];
-    if (!keys || keys.length === 0) keys = await loadPeerPublicKeys(peer);
-    if (!keys || keys.length === 0) return {text:text, encrypted:false};
+    try {
+      var username = getMeUsernameForE2ee();
+      var myAccountId = accountDeviceId(username);
 
-    var aesKey = await crypto.subtle.generateKey({name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
-    var iv = crypto.getRandomValues(new Uint8Array(12));
-    var enc = new TextEncoder();
-    var cipher = await crypto.subtle.encrypt({name:'AES-GCM', iv:iv}, aesKey, enc.encode(text));
-    var rawAes = await crypto.subtle.exportKey('raw', aesKey);
+      var allKeys = [];
+      if (msg.senderKeys) allKeys = allKeys.concat(msg.senderKeys);
+      if (msg.recipientKeys) allKeys = allKeys.concat(msg.recipientKeys);
 
-    var recipientKeys = [];
-    for (var i = 0; i < keys.length; i++) {
-      try {
-        var k = keys[i];
-        var pubKeyBytes = Uint8Array.from(atob(k.publicKey), function(c){ return c.charCodeAt(0); });
-        var pubKey = await crypto.subtle.importKey('spki', pubKeyBytes, {name:'RSA-OAEP',hash:'SHA-256'}, false, ['encrypt']);
-        var encAes = await crypto.subtle.encrypt({name:'RSA-OAEP'}, pubKey, rawAes);
-        recipientKeys.push({
-          deviceId: k.deviceId,
-          encryptedKey: btoa(String.fromCharCode.apply(null, new Uint8Array(encAes)))
-        });
-      } catch(e) {}
+      var myEncKey = allKeys.find(function(k){ return k.deviceId === myAccountId; });
+
+      if (!myEncKey) {
+        rsDebug('[E2E] no account AES key for this message');
+        return '[encrypted message]';
+      }
+
+      var encAesBytes = b64ToBytes(myEncKey.encryptedKey);
+      var rawAes = await crypto.subtle.decrypt({name:'RSA-OAEP'}, myKeyPair.privateKey, encAesBytes);
+      var aesKey = await crypto.subtle.importKey('raw', rawAes, {name:'AES-GCM'}, false, ['decrypt']);
+
+      var iv = b64ToBytes(msg.iv);
+      var cipherBytes = b64ToBytes(msg.text || msg.message || '');
+      var plain = await crypto.subtle.decrypt({name:'AES-GCM', iv:iv}, aesKey, cipherBytes);
+
+      return new TextDecoder().decode(plain);
+    } catch(e) {
+      rsDebug('[E2E] decrypt failed');
+      return '[encrypted message]';
     }
-
-    var mySpki = await crypto.subtle.exportKey('spki', myKeyPair.publicKey);
-    var myPubKey = await crypto.subtle.importKey('spki', new Uint8Array(mySpki), {name:'RSA-OAEP',hash:'SHA-256'}, false, ['encrypt']);
-    var encAesSelf = await crypto.subtle.encrypt({name:'RSA-OAEP'}, myPubKey, rawAes);
-    var senderKeys = [{
-      deviceId: myDeviceId,
-      encryptedKey: btoa(String.fromCharCode.apply(null, new Uint8Array(encAesSelf)))
-    }];
-
-    return {
-      text: btoa(String.fromCharCode.apply(null, new Uint8Array(cipher))),
-      iv: btoa(String.fromCharCode.apply(null, iv)),
-      algorithm: 'AES-GCM',
-      encrypted: true,
-      recipientKeys: recipientKeys,
-      senderKeys: senderKeys
-    };
-  } catch(e) {
-    console.error('[E2E] Encrypt failed:', e);
-    return {text:text, encrypted:false};
   }
-}
-
-async function decryptMessage(msg) {
-  if (!msg.encrypted || !myKeyPair) return msg.text || msg.message || '';
-  try {
-    var allKeys = [];
-    if (msg.senderKeys) allKeys = allKeys.concat(msg.senderKeys);
-    if (msg.recipientKeys) allKeys = allKeys.concat(msg.recipientKeys);
-
-    var myEncKey = allKeys.find(function(k){ return k.deviceId === myDeviceId; });
-    if (!myEncKey) return '[encrypted message]';
-
-    var encAesBytes = Uint8Array.from(atob(myEncKey.encryptedKey), function(c){ return c.charCodeAt(0); });
-    var rawAes = await crypto.subtle.decrypt({name:'RSA-OAEP'}, myKeyPair.privateKey, encAesBytes);
-    var aesKey = await crypto.subtle.importKey('raw', rawAes, {name:'AES-GCM'}, false, ['decrypt']);
-
-    var iv = Uint8Array.from(atob(msg.iv), function(c){ return c.charCodeAt(0); });
-    var cipherBytes = Uint8Array.from(atob(msg.text || msg.message || ''), function(c){ return c.charCodeAt(0); });
-    var plain = await crypto.subtle.decrypt({name:'AES-GCM', iv:iv}, aesKey, cipherBytes);
-    return new TextDecoder().decode(plain);
-  } catch(e) {
-    return '[encrypted message]';
-  }
-}
 
 // Context menu actions
 function hideCtxMenu() {
@@ -1285,7 +1559,7 @@ document.addEventListener("paste", async function(e) {
 
     if (sendBtn) sendBtn.disabled = false;
   } catch (err) {
-    console.error("Paste upload error:", err);
+    rsDebug('Paste upload error');
     showToast("Paste upload failed", "error");
     var sendBtn2 = document.getElementById("send-btn");
     if (sendBtn2) sendBtn2.disabled = false;
@@ -1367,6 +1641,967 @@ function showLiveCallPanel(ticketId, user) {
   };
 }
 </script>
+
+
+
+
+
+<style id="rs-discord-spaces-style">
+  #rs-spaces-section,
+  #rs-spaces-fixed-plus,
+  #rs-spaces-fixed-menu,
+  #rs-force-global-plus,
+  #rs-force-global-menu,
+  #rs-global-plus,
+  #rs-global-plus-menu,
+  .rs-spaces-plus {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
+  #rs-server-rail {
+    position: fixed;
+    left: 0;
+    top: 138px;
+    width: 48px;
+    z-index: 2147483000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 9px;
+    pointer-events: auto;
+  }
+
+  .rs-server-divider {
+    width: 28px;
+    height: 1px;
+    background: rgba(255,255,255,.10);
+    margin: 2px 0 4px;
+  }
+
+  .rs-server-icon,
+  #rs-create-server-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 13px;
+    border: 1px solid rgba(255,255,255,.10);
+    background: rgba(255,255,255,.045);
+    color: rgba(231,238,255,.92);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 800;
+    padding: 0;
+    transition: border-radius .15s ease, background .15s ease, transform .15s ease;
+  }
+
+  .rs-server-icon:hover,
+  #rs-create-server-btn:hover {
+    border-radius: 11px;
+    background: rgba(82,125,255,.18);
+    border-color: rgba(82,125,255,.38);
+    color: #fff;
+  }
+
+  .rs-server-icon.is-active {
+    border-radius: 10px;
+    background: linear-gradient(135deg, rgba(82,125,255,.98), rgba(137,91,255,.85));
+    border-color: rgba(255,255,255,.16);
+    color: #fff;
+  }
+
+  #rs-create-server-btn {
+    color: rgba(130,165,255,.95);
+    font-size: 19px;
+    font-weight: 600;
+  }
+
+  #rs-server-menu {
+    position: fixed;
+    min-width: 190px;
+    z-index: 2147483647;
+    padding: 7px;
+    border-radius: 16px;
+    background: rgba(13,18,31,.98);
+    border: 1px solid rgba(255,255,255,.12);
+    box-shadow: 0 18px 70px rgba(0,0,0,.50);
+    backdrop-filter: blur(16px);
+    display: none;
+  }
+
+  #rs-server-menu.is-open {
+    display: block;
+  }
+
+  #rs-server-menu button {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: rgba(231,238,255,.92);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 11px;
+    border-radius: 11px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  #rs-server-menu button:hover {
+    background: rgba(255,255,255,.07);
+  }
+
+  #rs-server-menu .rs-menu-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    background: rgba(82,125,255,.16);
+    color: rgba(150,180,255,.98);
+    flex: 0 0 auto;
+  }
+
+  #rs-discord-space-view {
+    position: fixed;
+    top: 0;
+    left: 48px;
+    right: 0;
+    bottom: 0;
+    z-index: 2147482000;
+    display: grid;
+    grid-template-columns: 230px minmax(0, 1fr);
+    background: #070b12;
+    color: rgba(231,238,255,.92);
+  }
+
+  .rs-discord-channel-panel {
+    border-right: 1px solid rgba(255,255,255,.07);
+    background: rgba(10,15,27,.98);
+    padding: 18px 12px;
+    min-width: 0;
+  }
+
+  .rs-discord-space-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 22px;
+  }
+
+  .rs-discord-space-title {
+    min-width: 0;
+  }
+
+  .rs-discord-space-title strong {
+    display: block;
+    color: #fff;
+    font-size: 15px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .rs-discord-space-title span {
+    display: block;
+    margin-top: 3px;
+    color: rgba(139,160,199,.68);
+    font-size: 11px;
+  }
+
+  .rs-discord-close {
+    width: 28px;
+    height: 28px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,.08);
+    background: rgba(255,255,255,.04);
+    color: rgba(231,238,255,.76);
+    cursor: pointer;
+  }
+
+  .rs-discord-close:hover {
+    background: rgba(255,255,255,.075);
+    color: #fff;
+  }
+
+  .rs-channel-heading {
+    margin: 0 0 8px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .12em;
+    color: rgba(139,160,199,.72);
+    text-transform: uppercase;
+  }
+
+  .rs-channel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .rs-channel-button {
+    width: 100%;
+    border: 0;
+    border-radius: 12px;
+    padding: 9px 10px;
+    background: transparent;
+    color: rgba(231,238,255,.78);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .rs-channel-button:hover {
+    background: rgba(255,255,255,.055);
+    color: #fff;
+  }
+
+  .rs-channel-button.is-active {
+    background: rgba(82,125,255,.14);
+    color: #fff;
+  }
+
+  .rs-channel-button span {
+    color: rgba(139,170,255,.95);
+  }
+
+  .rs-create-channel {
+    width: 100%;
+    margin-top: 8px;
+    border: 1px dashed rgba(139,160,199,.22);
+    border-radius: 12px;
+    padding: 9px 10px;
+    background: transparent;
+    color: rgba(139,160,199,.72);
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    font-size: 12px;
+  }
+
+  .rs-create-channel:hover {
+    background: rgba(255,255,255,.04);
+    color: rgba(231,238,255,.88);
+  }
+
+  .rs-discord-chat-panel {
+    display: grid;
+    grid-template-rows: 58px 1fr 72px;
+    min-width: 0;
+    background:
+      radial-gradient(circle at 50% 0%, rgba(82,125,255,.055), transparent 34%),
+      #070b12;
+  }
+
+  .rs-discord-chat-header {
+    border-bottom: 1px solid rgba(255,255,255,.07);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 22px;
+  }
+
+  .rs-discord-chat-header span {
+    color: rgba(139,170,255,.95);
+  }
+
+  .rs-discord-chat-header strong {
+    color: #fff;
+    font-size: 15px;
+  }
+
+  .rs-discord-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 28px;
+  }
+
+  .rs-discord-empty-card {
+    max-width: 430px;
+  }
+
+  .rs-discord-empty-icon {
+    width: 58px;
+    height: 58px;
+    margin: 0 auto 16px;
+    border-radius: 20px;
+    display: grid;
+    place-items: center;
+    background: rgba(82,125,255,.12);
+    border: 1px solid rgba(82,125,255,.28);
+    color: rgba(140,170,255,.96);
+  }
+
+  .rs-discord-empty h2 {
+    margin: 0 0 8px;
+    color: #fff;
+    font-size: 22px;
+    letter-spacing: -.03em;
+  }
+
+  .rs-discord-empty p {
+    margin: 0;
+    color: rgba(139,160,199,.7);
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .rs-discord-message-box {
+    border-top: 1px solid rgba(255,255,255,.07);
+    padding: 12px 18px;
+    display: flex;
+    align-items: center;
+  }
+
+  .rs-discord-message-box input {
+    width: 100%;
+    height: 44px;
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 15px;
+    background: rgba(255,255,255,.045);
+    color: rgba(231,238,255,.92);
+    padding: 0 14px;
+    outline: none;
+    font: inherit;
+  }
+
+  .rs-discord-message-box input::placeholder {
+    color: rgba(139,160,199,.55);
+  }
+
+  .rs-discord-toast {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 2147483647;
+    max-width: 360px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    background: rgba(13,18,31,.98);
+    border: 1px solid rgba(255,255,255,.1);
+    color: rgba(231,238,255,.92);
+    box-shadow: 0 18px 70px rgba(0,0,0,.42);
+    font-size: 13px;
+    opacity: 0;
+    transform: translateY(8px);
+    pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+  }
+
+  .rs-discord-toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+</style>
+
+<script id="rs-discord-spaces-script">
+(function () {
+  const LS_KEY = "runspace_frontend_spaces_v2";
+  const OLD_KEYS = [
+    "runspace_frontend_spaces_v1",
+    "runspace_frontend_spaces_v2",
+    "runspace_frontend_spaces_v3"
+  ];
+
+  function ready(fn) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", fn);
+    } else {
+      fn();
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function getSpaces() {
+    for (const key of OLD_KEYS) {
+      try {
+        const spaces = JSON.parse(localStorage.getItem(key) || "[]");
+        if (Array.isArray(spaces) && spaces.length) {
+          const normalized = normalizeSpaces(spaces);
+          localStorage.setItem(LS_KEY, JSON.stringify(normalized));
+          return normalized;
+        }
+      } catch {}
+    }
+
+    try {
+      return normalizeSpaces(JSON.parse(localStorage.getItem(LS_KEY) || "[]"));
+    } catch {
+      return [];
+    }
+  }
+
+  function saveSpaces(spaces) {
+    localStorage.setItem(LS_KEY, JSON.stringify(normalizeSpaces(spaces)));
+  }
+
+  function normalizeSpaces(spaces) {
+    return (Array.isArray(spaces) ? spaces : []).map(space => ({
+      id: space.id || String(Date.now()) + Math.random().toString(16).slice(2),
+      name: space.name || "Space",
+      createdAt: space.createdAt || new Date().toISOString(),
+      channels: Array.isArray(space.channels) && space.channels.length ? space.channels : ["general"]
+    }));
+  }
+
+  function initials(name) {
+    return String(name || "S")
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(x => x[0])
+      .join("")
+      .toUpperCase() || "S";
+  }
+
+  function toast(message) {
+    let el = document.querySelector(".rs-discord-toast");
+
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "rs-discord-toast";
+      document.body.appendChild(el);
+    }
+
+    el.textContent = message;
+    el.classList.add("show");
+
+    clearTimeout(el._timer);
+    el._timer = setTimeout(() => el.classList.remove("show"), 2300);
+  }
+
+  function cleanOldElements() {
+    document.querySelectorAll(
+      "#rs-spaces-section, #rs-spaces-fixed-plus, #rs-spaces-fixed-menu, #rs-force-global-plus, #rs-force-global-menu, #rs-global-plus, #rs-global-plus-menu, .rs-spaces-plus"
+    ).forEach(el => el.remove());
+  }
+
+  function ensureRail() {
+    let rail = document.querySelector("#rs-server-rail");
+
+    if (!rail) {
+      rail = document.createElement("div");
+      rail.id = "rs-server-rail";
+      document.body.appendChild(rail);
+    }
+
+    return rail;
+  }
+
+  function renderRail() {
+    cleanOldElements();
+
+    const rail = ensureRail();
+    const spaces = getSpaces();
+
+    rail.innerHTML = `<div class="rs-server-divider"></div>`;
+
+    for (const space of spaces) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "rs-server-icon";
+      btn.textContent = initials(space.name);
+      btn.title = space.name;
+      btn.dataset.spaceId = space.id;
+
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".rs-server-icon").forEach(x => x.classList.remove("is-active"));
+        btn.classList.add("is-active");
+        renderSpaceView(space.id);
+      });
+
+      rail.appendChild(btn);
+    }
+
+    const createBtn = document.createElement("button");
+    createBtn.type = "button";
+    createBtn.id = "rs-create-server-btn";
+    createBtn.textContent = "+";
+    createBtn.title = "Create or join Space";
+    createBtn.setAttribute("aria-label", "Create or join Space");
+    rail.appendChild(createBtn);
+
+    hookCreateButton(createBtn);
+  }
+
+  function ensureMenu() {
+    let menu = document.querySelector("#rs-server-menu");
+
+    if (!menu) {
+      menu = document.createElement("div");
+      menu.id = "rs-server-menu";
+      menu.innerHTML = `
+        <button type="button" data-action="create-space">
+          <span class="rs-menu-icon">＋</span>
+          <span>Create Space</span>
+        </button>
+        <button type="button" data-action="join-space">
+          <span class="rs-menu-icon">↪</span>
+          <span>Join Space</span>
+        </button>
+      `;
+      document.body.appendChild(menu);
+
+      menu.addEventListener("click", ev => {
+        const item = ev.target.closest("button[data-action]");
+        if (!item) return;
+
+        const action = item.dataset.action;
+        menu.classList.remove("is-open");
+
+        if (action === "create-space") {
+          const name = prompt("Space name:");
+          if (!name || !name.trim()) return;
+
+          const spaces = getSpaces();
+          const newSpace = {
+            id: String(Date.now()),
+            name: name.trim(),
+            createdAt: new Date().toISOString(),
+            channels: ["general"]
+          };
+
+          spaces.push(newSpace);
+          saveSpaces(spaces);
+          renderRail();
+          renderSpaceView(newSpace.id);
+
+          const icon = document.querySelector(`.rs-server-icon[data-space-id="${newSpace.id}"]`);
+          if (icon) icon.classList.add("is-active");
+
+          toast("Space created: " + name.trim());
+        }
+
+        if (action === "join-space") {
+          const code = prompt("Invite code:");
+          if (!code || !code.trim()) return;
+
+          toast("Join Space is frontend-only for now.");
+        }
+      });
+
+      document.addEventListener("click", ev => {
+        if (!menu.contains(ev.target) && ev.target.id !== "rs-create-server-btn") {
+          menu.classList.remove("is-open");
+        }
+      });
+    }
+
+    return menu;
+  }
+
+  function hookCreateButton(btn) {
+    const menu = ensureMenu();
+
+    btn.addEventListener("click", ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+
+      const r = btn.getBoundingClientRect();
+      menu.style.top = Math.round(r.top) + "px";
+      menu.style.left = Math.round(r.right + 10) + "px";
+      menu.classList.toggle("is-open");
+    });
+  }
+
+  function renderSpaceView(spaceId) {
+    const spaces = getSpaces();
+    const space = spaces.find(x => x.id === spaceId);
+
+    if (!space) return;
+
+    let view = document.querySelector("#rs-discord-space-view");
+
+    if (!view) {
+      view = document.createElement("div");
+      view.id = "rs-discord-space-view";
+      document.body.appendChild(view);
+    }
+
+    const channels = Array.isArray(space.channels) && space.channels.length ? space.channels : ["general"];
+    const activeChannel = channels[0];
+
+    view.innerHTML = `
+      <aside class="rs-discord-channel-panel">
+        <div class="rs-discord-space-top">
+          <div class="rs-discord-space-title">
+            <strong>${escapeHtml(space.name)}</strong>
+            <span>RunSpace Space</span>
+          </div>
+          <button class="rs-discord-close" type="button" title="Back to messages">×</button>
+        </div>
+
+        <div class="rs-channel-heading">Text channels</div>
+        <div class="rs-channel-list">
+          ${channels.map((channel, index) => `
+            <button class="rs-channel-button ${index === 0 ? "is-active" : ""}" type="button" data-channel="${escapeHtml(channel)}">
+              <span>#</span>
+              ${escapeHtml(channel)}
+            </button>
+          `).join("")}
+        </div>
+
+        <button class="rs-create-channel" type="button">+ Create channel</button>
+      </aside>
+
+      <main class="rs-discord-chat-panel">
+        <header class="rs-discord-chat-header">
+          <span>#</span>
+          <strong>${escapeHtml(activeChannel)}</strong>
+        </header>
+
+        <section class="rs-discord-empty">
+          <div class="rs-discord-empty-card">
+            <div class="rs-discord-empty-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <path d="M7 8h10M6 12h8M8 16h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <h2>No messages in #${escapeHtml(activeChannel)} yet</h2>
+            <p>This Space is frontend-only right now. Backend messages and invites come next.</p>
+          </div>
+        </section>
+
+        <form class="rs-discord-message-box">
+          <input placeholder="Message #${escapeHtml(activeChannel)}" disabled />
+        </form>
+      </main>
+    `;
+
+    view.querySelector(".rs-discord-close").addEventListener("click", () => {
+      view.remove();
+      document.querySelectorAll(".rs-server-icon").forEach(x => x.classList.remove("is-active"));
+    });
+
+    view.querySelectorAll(".rs-channel-button").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const channel = btn.dataset.channel || "general";
+
+        view.querySelectorAll(".rs-channel-button").forEach(x => x.classList.remove("is-active"));
+        btn.classList.add("is-active");
+
+        view.querySelector(".rs-discord-chat-header strong").textContent = channel;
+        view.querySelector(".rs-discord-empty h2").textContent = "No messages in #" + channel + " yet";
+        view.querySelector(".rs-discord-message-box input").placeholder = "Message #" + channel;
+      });
+    });
+
+    view.querySelector(".rs-create-channel").addEventListener("click", () => {
+      const name = prompt("Channel name:");
+      if (!name || !name.trim()) return;
+
+      const clean = name.trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-").replace(/-+/g, "-");
+      if (!clean) return;
+
+      const freshSpaces = getSpaces();
+      const target = freshSpaces.find(x => x.id === space.id);
+      if (!target) return;
+
+      target.channels = Array.isArray(target.channels) ? target.channels : ["general"];
+
+      if (!target.channels.includes(clean)) {
+        target.channels.push(clean);
+        saveSpaces(freshSpaces);
+      }
+
+      renderSpaceView(space.id);
+      toast("Channel created: #" + clean);
+    });
+  }
+
+  function boot() {
+    renderRail();
+  }
+
+  ready(() => {
+    boot();
+    setTimeout(boot, 300);
+    setTimeout(boot, 1000);
+  });
+})();
+</script>
+
+
+<style id="rs-discord-cleanup-style">
+  /* Move Space/server icons a bit lower so they don't collide with the main nav */
+  #rs-server-rail {
+    top: 158px !important;
+    gap: 10px !important;
+  }
+
+  #rs-server-rail .rs-server-divider {
+    width: 26px !important;
+    height: 1px !important;
+    background: rgba(255,255,255,.14) !important;
+    margin: 0 0 3px !important;
+    display: block !important;
+  }
+
+  .rs-server-icon,
+  #rs-create-server-btn {
+    width: 34px !important;
+    height: 34px !important;
+    border-radius: 14px !important;
+    background: rgba(255,255,255,.045) !important;
+    border: 1px solid rgba(255,255,255,.11) !important;
+    box-shadow: none !important;
+  }
+
+  .rs-server-icon:hover,
+  #rs-create-server-btn:hover {
+    border-radius: 11px !important;
+    background: rgba(82,125,255,.18) !important;
+  }
+
+  .rs-server-icon.is-active {
+    border-radius: 11px !important;
+    background: linear-gradient(135deg, rgba(82,125,255,.96), rgba(126,87,255,.82)) !important;
+    color: #fff !important;
+  }
+
+  #rs-create-server-btn {
+    color: rgba(135,165,255,.95) !important;
+    font-size: 18px !important;
+  }
+
+  .rs-hide-old-chat-plus {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+</style>
+
+<script id="rs-discord-cleanup-script">
+(function () {
+  function ready(fn) {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", fn);
+    } else {
+      fn();
+    }
+  }
+
+  function txt(el) {
+    return (el && el.textContent || "").trim();
+  }
+
+  function hideOldChatPluses() {
+    const candidates = Array.from(document.querySelectorAll("button, a, [role='button'], span, div"));
+
+    for (const el of candidates) {
+      if (txt(el) !== "+") continue;
+
+      if (
+        el.id === "rs-create-server-btn" ||
+        el.closest("#rs-server-rail") ||
+        el.closest("#rs-server-menu") ||
+        el.closest("#rs-discord-space-view")
+      ) {
+        continue;
+      }
+
+      const r = el.getBoundingClientRect();
+
+      /*
+        Hide old pluses inside the Messages panel:
+        - top Messages plus
+        - DIRECT MESSAGES plus
+        Keep the server rail plus alive.
+      */
+      if (r.left > 45 && r.left < 270 && r.top < 170 && r.width <= 42 && r.height <= 42) {
+        el.classList.add("rs-hide-old-chat-plus");
+        el.setAttribute("aria-hidden", "true");
+        el.setAttribute("tabindex", "-1");
+      }
+    }
+  }
+
+  function boot() {
+    hideOldChatPluses();
+  }
+
+  ready(() => {
+    boot();
+    setTimeout(boot, 250);
+    setTimeout(boot, 800);
+    setTimeout(boot, 1600);
+
+    const mo = new MutationObserver(() => {
+      clearTimeout(window.__rsCleanupPlusTimer);
+      window.__rsCleanupPlusTimer = setTimeout(boot, 80);
+    });
+
+    mo.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["class", "style"]
+    });
+  });
+})();
+</script>
+
+
+
+
+
+
+
+<style id="rs-rail-uniform-style">
+  /*
+    Make the left rail visually consistent:
+    - all rail buttons same outer size
+    - SVG icons same inner size
+    - Space letters made smaller so they match SVG icons optically
+  */
+
+  .rs-native-rail-btn,
+  .rs-server-icon,
+  #rs-create-server-btn {
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    min-height: 36px !important;
+    max-width: 36px !important;
+    max-height: 36px !important;
+
+    display: grid !important;
+    place-items: center !important;
+
+    padding: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    transform: none !important;
+
+    border-radius: 14px !important;
+  }
+
+  .rs-native-rail-btn svg {
+    width: 16px !important;
+    height: 16px !important;
+    display: block !important;
+  }
+
+  #rs-server-rail {
+    position: fixed !important;
+    left: 6px !important;
+    top: 158px !important;
+    width: 36px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    transform: none !important;
+    z-index: 2147483000 !important;
+  }
+
+  .rs-server-icon {
+    font-size: 12px !important;
+    line-height: 1 !important;
+    font-weight: 800 !important;
+    letter-spacing: 0 !important;
+  }
+
+  #rs-create-server-btn {
+    font-size: 18px !important;
+    line-height: 1 !important;
+    font-weight: 500 !important;
+  }
+
+  #rs-server-rail .rs-server-divider {
+    width: 28px !important;
+    height: 1px !important;
+    margin: 0 4px 3px !important;
+    background: rgba(255,255,255,.14) !important;
+    flex: 0 0 auto !important;
+  }
+
+  #rs-discord-space-view {
+    left: 48px !important;
+  }
+</style>
+
+<script id="rs-rail-uniform-script">
+(function () {
+  function markNativeRailButtons() {
+    const buttons = Array.from(document.querySelectorAll("button, a, [role='button']"));
+
+    for (const btn of buttons) {
+      if (btn.closest("#rs-server-rail")) continue;
+      if (btn.id && btn.id.startsWith("rs-")) continue;
+
+      const r = btn.getBoundingClientRect();
+
+      /*
+        Native rail icons:
+        left side, above the injected Space icons.
+        This marks home/music-style buttons, not Messages-panel buttons.
+      */
+      if (
+        r.left >= 0 &&
+        r.left < 48 &&
+        r.top > 40 &&
+        r.top < 150 &&
+        r.width >= 28 &&
+        r.width <= 42 &&
+        r.height >= 28 &&
+        r.height <= 42
+      ) {
+        btn.classList.add("rs-native-rail-btn");
+      }
+    }
+  }
+
+  function boot() {
+    markNativeRailButtons();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+
+  setTimeout(boot, 250);
+  setTimeout(boot, 800);
+  setTimeout(boot, 1600);
+
+  const mo = new MutationObserver(() => {
+    clearTimeout(window.__rsUniformRailTimer);
+    window.__rsUniformRailTimer = setTimeout(boot, 100);
+  });
+
+  mo.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+})();
+</script>
+
 
 </body>
 </html>

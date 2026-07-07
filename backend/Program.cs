@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.DataProtection;
 using OtpNet;
 using QRCoder;
 using Stripe;
@@ -19,6 +20,15 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Persist ASP.NET DataProtection keys so auth/session cookies survive restarts.
+var dpKeysPath = builder.Configuration["DataProtection:KeysPath"] ?? "/var/lib/runspace/dpkeys";
+Directory.CreateDirectory(dpKeysPath);
+
+builder.Services.AddDataProtection()
+    .SetApplicationName("RunSpace")
+    .PersistKeysToFileSystem(new DirectoryInfo(dpKeysPath));
+
 builder.WebHost.UseUrls("http://127.0.0.1:5000");
 
 builder.WebHost.ConfigureKestrel(options =>
@@ -62,6 +72,7 @@ builder.Services.AddSingleton<NonceManager>();
 builder.Services.AddSingleton<SessionAnomalyDetector>();
 builder.Services.AddSingleton<VoiceChannelManager>();
 builder.Services.AddHostedService<BehaviorRecoveryService>();
+builder.Services.AddHostedService<AuraScoreService>();
 builder.Services.AddSingleton<PresenceTracker>();
 builder.Services.AddSingleton<GroupVoiceManager>();
 builder.Services.AddHttpClient();
@@ -70,7 +81,7 @@ builder.Services
     .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
-        options.Cookie.Name = "runspace_auth";
+        options.Cookie.Name = "runspace_auth_v3";
         options.Cookie.HttpOnly = true;
         options.Cookie.SameSite = SameSiteMode.Lax;
         options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
@@ -82,7 +93,70 @@ builder.Services
         {
             OnRedirectToLogin = ctx => { ctx.Response.StatusCode = 401; return Task.CompletedTask; },
             OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = 403; return Task.CompletedTask; },
-            // OnValidatePrincipal removed - using standard ASP.NET cookie auth only
+
+            // rs-cookie-security-changed-validator-v1
+            OnValidatePrincipal = async ctx =>
+            {
+                var username = ctx.Principal?.Identity?.Name?.Trim().ToLowerInvariant() ?? "";
+                if (string.IsNullOrWhiteSpace(username))
+                {
+                    ctx.RejectPrincipal();
+                    await ctx.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                    return;
+                }
+
+                try
+                {
+                    using var db = DbHelpers.OpenDb();
+                    DbHelpers.EnsureColumn(db, "AuthUsers", "SecurityChangedAt", "TEXT NOT NULL DEFAULT ''");
+
+                    using var cmd = db.CreateCommand();
+                    cmd.CommandText = @"
+                        SELECT SecurityChangedAt, Status, COALESCE(IsSuspended,0)
+                        FROM AuthUsers
+                        WHERE LOWER(Username)=LOWER($u)
+                        LIMIT 1";
+                    cmd.Parameters.AddWithValue("$u", username);
+
+                    using var r = cmd.ExecuteReader();
+                    if (!r.Read())
+                    {
+                        ctx.RejectPrincipal();
+                        await ctx.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                        return;
+                    }
+
+                    var securityChangedAt = r.IsDBNull(0) ? "" : r.GetString(0);
+                    var status = r.IsDBNull(1) ? "" : r.GetString(1);
+                    var isSuspended = !r.IsDBNull(2) && r.GetInt32(2) == 1;
+
+                    if (status.Equals("banned", StringComparison.OrdinalIgnoreCase) || isSuspended)
+                    {
+                        ctx.RejectPrincipal();
+                        await ctx.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                        return;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(securityChangedAt)
+                        && DateTime.TryParse(securityChangedAt, null, System.Globalization.DateTimeStyles.RoundtripKind, out var changedAt))
+                    {
+                        var issuedAt = ctx.Properties?.IssuedUtc?.UtcDateTime;
+
+                        if (issuedAt.HasValue && issuedAt.Value <= changedAt.ToUniversalTime())
+                        {
+                            ctx.RejectPrincipal();
+                            await ctx.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                            return;
+                        }
+                    }
+                }
+                catch
+                {
+                    // Fail closed for authenticated requests if auth validation itself breaks.
+                    ctx.RejectPrincipal();
+                    await ctx.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                }
+            }
         };
     });
 
@@ -99,8 +173,120 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+
+// rs-safe-api-error-guard-v1
+// Defensive API error handling: never leak raw exceptions or parser details to clients.
+app.Use(async (ctx, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (System.Text.Json.JsonException ex) when ((ctx.Request.Path.Value ?? "").StartsWith("/api/"))
+    {
+        if (ctx.Response.HasStarted) throw;
+
+        Console.WriteLine($"[API JSON ERROR] requestId={ctx.TraceIdentifier} path={ctx.Request.Path} type={ex.GetType().Name}");
+
+        ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
+        ctx.Response.ContentType = "application/json; charset=utf-8";
+        await ctx.Response.WriteAsync("{\"error\":\"Invalid JSON request.\"}");
+    }
+    catch (Microsoft.AspNetCore.Http.BadHttpRequestException ex) when ((ctx.Request.Path.Value ?? "").StartsWith("/api/"))
+    {
+        if (ctx.Response.HasStarted) throw;
+
+        Console.WriteLine($"[API BAD REQUEST] requestId={ctx.TraceIdentifier} path={ctx.Request.Path} type={ex.GetType().Name}");
+
+        ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
+        ctx.Response.ContentType = "application/json; charset=utf-8";
+        await ctx.Response.WriteAsync("{\"error\":\"Bad request.\"}");
+    }
+    catch (Exception ex) when ((ctx.Request.Path.Value ?? "").StartsWith("/api/"))
+    {
+        if (ctx.Response.HasStarted) throw;
+
+        Console.WriteLine($"[API ERROR] requestId={ctx.TraceIdentifier} path={ctx.Request.Path} type={ex.GetType().Name}");
+
+        ctx.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        ctx.Response.ContentType = "application/json; charset=utf-8";
+        await ctx.Response.WriteAsync("{\"error\":\"Internal server error.\"}");
+    }
+});
+
+
+// rs-defensive-request-guard-v1
+// Keep normal JSON/API requests small. Larger bodies are only allowed for uploads and trusted webhooks.
+app.Use(async (ctx, next) =>
+{
+    var path = (ctx.Request.Path.Value ?? "").ToLowerInvariant();
+    var method = ctx.Request.Method.ToUpperInvariant();
+
+    if (path.StartsWith("/api/") && method is "POST" or "PUT" or "PATCH")
+    {
+        var isLargeBodyEndpoint =
+            path.Contains("/upload") ||
+            path.Contains("/webhook") ||
+            path.Contains("/stripe/") ||
+            path.Contains("/billing/webhook") ||
+            path.Contains("/icon");
+
+        long maxBytes =
+            isLargeBodyEndpoint ? 30L * 1024L * 1024L :
+            path.StartsWith("/api/auth/") ? 16L * 1024L :
+            128L * 1024L;
+
+        var maxBodyFeature = ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
+        if (maxBodyFeature is { IsReadOnly: false })
+            maxBodyFeature.MaxRequestBodySize = maxBytes;
+
+        if (ctx.Request.ContentLength.HasValue && ctx.Request.ContentLength.Value > maxBytes)
+        {
+            ctx.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+            ctx.Response.ContentType = "application/json; charset=utf-8";
+            await ctx.Response.WriteAsync("{\"error\":\"Request body too large.\"}");
+            return;
+        }
+    }
+
+    await next();
+});
+
+
 app.UseForwardedHeaders(new ForwardedHeadersOptions { ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto });
 DbHelpers.EnsureDatabase();
+
+// Account-level E2EE key envelope table.
+// Server stores encrypted private keys only. Plain private keys never touch the server.
+try
+{
+    using var _e2eeDb = DbHelpers.OpenDb();
+    using var _e2eeCmd = _e2eeDb.CreateCommand();
+    _e2eeCmd.CommandText = @"
+CREATE TABLE IF NOT EXISTS AccountE2eeKeys (
+  Username TEXT PRIMARY KEY,
+  PublicKey TEXT NOT NULL DEFAULT '',
+  EncryptedPrivateKey TEXT NOT NULL DEFAULT '',
+  Salt TEXT NOT NULL DEFAULT '',
+  Nonce TEXT NOT NULL DEFAULT '',
+  Kdf TEXT NOT NULL DEFAULT 'PBKDF2-SHA256',
+  Iterations INTEGER NOT NULL DEFAULT 310000,
+  Version INTEGER NOT NULL DEFAULT 1,
+  CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+  UpdatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS IX_AccountE2eeKeys_Username
+ON AccountE2eeKeys(Username);
+";
+    _e2eeCmd.ExecuteNonQuery();
+}
+catch (Exception ex)
+{
+    Console.WriteLine("[startup] database init failed.");
+}
+
 ServerDb.EnsureMusicSchema();
 
 // Security headers
@@ -128,6 +314,8 @@ app.Use(async (ctx, next) =>
     ctx.Response.Headers["X-Request-Id"] = (string)ctx.Items["RequestId"];
     await next();
 });
+
+app.UseMiddleware<RequestGuardMiddleware>();
 
 app.Use(async (ctx, next) =>
 {
@@ -157,7 +345,8 @@ app.Use(async (ctx, next) =>
 app.Use(async (ctx, next) =>
 {
     var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-    var ua = ctx.Request.Headers.UserAgent.ToString();
+    // rs-user-agent-middleware-defensive-v1
+    var ua = DefensiveInput.CleanString(ctx.Request.Headers.UserAgent.ToString(), 512);
     var bad = new[] { "headlesschrome","phantomjs","selenium","puppeteer","playwright","httpclient","python-requests","curl/","wget/","scrapy","bot","crawler" };
     if (ctx.Request.Path.Value?.StartsWith("/api/auth/") == true && (string.IsNullOrWhiteSpace(ua) || bad.Any(s => ua.ToLowerInvariant().Contains(s))))
     { await Task.Delay(RandomNumberGenerator.GetInt32(2000, 5000)); }
@@ -255,7 +444,7 @@ app.UseAuthorization();
 app.MapGet("/api/auth/csrf", (HttpContext ctx) =>
 {
     var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-    ctx.Response.Cookies.Append("__Host-csrf", token, new CookieOptions { HttpOnly = false, Secure = false, SameSite = SameSiteMode.Lax, Path = "/", MaxAge = TimeSpan.FromHours(4) });
+    ctx.Response.Cookies.Append("__Host-csrf", token, new CookieOptions { HttpOnly = false, Secure = true, SameSite = SameSiteMode.Lax, Path = "/", MaxAge = TimeSpan.FromHours(4) });
     return Results.Ok(new { csrfToken = token });
 });
 
@@ -308,7 +497,7 @@ app.MapPost("/api/presence/music", async (HttpContext ctx, IHubContext<ChatHub> 
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"[music-presence] broadcast failed: {ex.Message}");
+        Console.WriteLine("[music-presence] broadcast failed.");
         return Results.BadRequest(new { error = "invalid_json" });
     }
 
@@ -318,11 +507,7 @@ app.MapPost("/api/presence/music", async (HttpContext ctx, IHubContext<ChatHub> 
 app.MapGet("/api/me", async (HttpContext ctx) =>
 {
     Console.WriteLine($"[/api/me] Called. IsAuthenticated: {ctx.User.Identity?.IsAuthenticated}, Name: {ctx.User.Identity?.Name}");
-    Console.WriteLine($"[/api/me] Cookie count: {ctx.Request.Cookies.Count}");
-    foreach (var cookie in ctx.Request.Cookies)
-    {
-        Console.WriteLine($"[/api/me] Cookie: {cookie.Key} = {cookie.Value.Substring(0, Math.Min(20, cookie.Value.Length))}...");
-    }
+    // Defensive logging rule: never log cookie values, auth tokens, secrets, private keys or passwords.
     
     if (ctx.User.Identity?.IsAuthenticated != true)
     {
@@ -336,12 +521,16 @@ app.MapGet("/api/me", async (HttpContext ctx) =>
     cmd.CommandText = @"SELECT Bio, AvatarUrl, CreatedAt, Status, Badges, TwoFactorEnabled, Nationality, Languages, Links, BannerUrl,
         EmailVerified, TrustLevel, TrustScore, IsSuspended, Email, PublicId,
         trust_identity, trust_behavior, trust_device, trust_disabled_features,
-        IsPremium, PremiumPlan, PremiumSince, PremiumUntil
+        IsPremium, PremiumPlan, PremiumSince, PremiumUntil,
+        aura_score, aura_active_days, aura_last_active_date
         FROM AuthUsers WHERE Username = $u LIMIT 1";
     cmd.Parameters.AddWithValue("$u", username);
     using var r = cmd.ExecuteReader();
     if (!r.Read()) { await ctx.SignOutAsync(); return Results.Unauthorized(); }
     var createdAt = r.IsDBNull(2) ? "" : r.GetString(2);
+    var auraScore = r.IsDBNull(24) ? 0.0 : Convert.ToDouble(r.GetValue(24));
+    var auraActiveDays = r.IsDBNull(25) ? 0 : Convert.ToInt32(r.GetValue(25));
+    var auraLastActiveDate = r.IsDBNull(26) ? "" : r.GetString(26);
     // --- Trust computation ---
     var emailVerified = !r.IsDBNull(10) && r.GetInt32(10) == 1;
     var twoFa = !r.IsDBNull(5) && r.GetInt32(5) == 1;
@@ -354,7 +543,11 @@ app.MapGet("/api/me", async (HttpContext ctx) =>
     var storedUser_trust_disabled = r.IsDBNull(19) ? null : r.GetString(19);
     // Device check
     // Device token läses enbart från HttpOnly cookie – header accepteras inte
-    var deviceToken = ctx.Request.Cookies["rs-dt"] ?? "";
+    // rs-device-token-legacy-defensive-v1
+    var deviceToken = DefensiveInput.CleanString(ctx.Request.Cookies["rs-dt"], 256);
+    if (!DefensiveInput.IsSafeToken(deviceToken))
+        deviceToken = "";
+
     var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "";
     bool knownDevice = false;
     var _deviceRiskScore = 0;
@@ -371,9 +564,15 @@ app.MapGet("/api/me", async (HttpContext ctx) =>
         using var upsertDev = db.CreateCommand();
         upsertDev.CommandText = @"INSERT OR IGNORE INTO DeviceTokens (UserId, DeviceToken, DeviceName, UserAgent,  IpPrefix, FirstSeenAt, LastSeenAt, IsTrusted, SessionCount)
             SELECT Id, $tok, $name, $ua,  $prefix, datetime('now'), datetime('now'), 0, 1 FROM AuthUsers WHERE Username=$u";
+        var safeDeviceName = DefensiveInput.CleanString(ctx.Request.Headers["X-Device-Name"].FirstOrDefault() ?? "Web Browser", 80);
+        if (string.IsNullOrWhiteSpace(safeDeviceName))
+            safeDeviceName = "Web Browser";
+
+        var safeUserAgent = DefensiveInput.CleanString(ctx.Request.Headers.UserAgent.ToString(), 512);
+
         upsertDev.Parameters.AddWithValue("$tok", deviceToken);
-        upsertDev.Parameters.AddWithValue("$name", ctx.Request.Headers["X-Device-Name"].FirstOrDefault() ?? "Web Browser");
-        upsertDev.Parameters.AddWithValue("$ua", ctx.Request.Headers.UserAgent.ToString());
+        upsertDev.Parameters.AddWithValue("$name", safeDeviceName);
+        upsertDev.Parameters.AddWithValue("$ua", safeUserAgent);
         upsertDev.Parameters.AddWithValue("$ip", ip);
         upsertDev.Parameters.AddWithValue("$prefix", _ipPrefix);
         upsertDev.Parameters.AddWithValue("$u", username);
@@ -539,6 +738,14 @@ app.MapGet("/api/me", async (HttpContext ctx) =>
         // --- Trust data for frontend ---
         emailVerified, email = r.IsDBNull(14) ? "" : r.GetString(14), knownDevice, accountAgeDays = ageDays,
         publicId = r.IsDBNull(15) ? "" : r.GetString(15),
+        auraScore = Math.Round(auraScore, 1),
+        auraActiveDays,
+        auraLastActiveDate,
+        aura = new {
+            score = Math.Round(auraScore, 1),
+            activeDays = auraActiveDays,
+            lastActiveDate = auraLastActiveDate
+        },
         trust = new {
             composite = Math.Round(composite, 1),
             level = trustLevel,
@@ -580,8 +787,18 @@ app.MapPost("/api/auth/register", async (HttpContext ctx, IHttpClientFactory htt
     // Email honeypot removed — email now used for OTP
     // Captcha replaced by trust engine signal scoring
 
-    var username = req.Username.Trim().ToLowerInvariant();
-    if (!AppHelpers.IsValidUsername(username)) return Results.BadRequest(new { message = "Ogiltigt användarnamn" });
+    // rs-auth-input-defensive-v1
+    var username = DefensiveInput.CleanString(req.Username, 32).ToLowerInvariant();
+    if (!DefensiveInput.IsUsername(username) || !AppHelpers.IsValidUsername(username))
+        return Results.BadRequest(new { message = "Ogiltigt användarnamn" });
+
+    if (!DefensiveInput.IsSafePasswordInput(req.Password))
+        return Results.BadRequest(new { message = "Ogiltigt lösenord." });
+
+    var email = DefensiveInput.CleanString(req.Email, 254).ToLowerInvariant();
+    if (!string.IsNullOrWhiteSpace(email) && !DefensiveInput.IsEmail(email))
+        return Results.BadRequest(new { message = "Ogiltig e-postadress." });
+
     if (ReservedNames.IsReserved(username)) return Results.BadRequest(new { message = "Reserverat." });
     if (ContentFilter.IsOffensive(username)) return Results.BadRequest(new { message = "Otillåtet användarnamn." });
     var pwCheck = PasswordPolicy.Validate(req.Password);
@@ -592,10 +809,9 @@ app.MapPost("/api/auth/register", async (HttpContext ctx, IHttpClientFactory htt
     using var exists = db.CreateCommand();
     exists.CommandText = "SELECT COUNT(*) FROM AuthUsers WHERE Username = $u"; exists.Parameters.AddWithValue("$u", username);
     if (Convert.ToInt32(exists.ExecuteScalar()) > 0) { await Task.Delay(RandomNumberGenerator.GetInt32(100, 300)); return Results.Json(new { status = "error", message = "Username already taken" }, statusCode: 409); }
-    var hash = BCrypt.Net.BCrypt.HashPassword(req.Password + AppConfig.PasswordPepper, workFactor: 12);
+    var hash = PasswordHashing.HashPassword(req.Password);
     var now = DateTime.UtcNow.ToString("o");
     using var ins = db.CreateCommand();
-    var email = (req.Email ?? "").Trim().ToLowerInvariant();
     ins.CommandText = @"INSERT INTO AuthUsers (Username,PasswordHash,Bio,AvatarUrl,CreatedAt,Status,Badges,PublicKey,TwoFactorEnabled,TwoFactorSecret,PasswordChangedAt,LoginCount,LastLoginAt,LastLoginIp,AccountLockedUntil,Email,PublicId)
         VALUES ($u,$p,'','', $t,'pending','[]','',0,'',$t,0,'','','',$e,lower(hex(randomblob(16))))";
     
@@ -607,10 +823,41 @@ app.MapPost("/api/auth/register", async (HttpContext ctx, IHttpClientFactory htt
         var otpCode = OtpGenerator.GenerateCode();
         var cacheKey = $"reg_otp:{username}";
         OtpCache.Set(cacheKey, otpCode, TimeSpan.FromMinutes(15));
-        try { await SmtpMailService.SendOtpAsync(email, username, otpCode, "verify"); Console.WriteLine("[SMTP] OTP sent to " + email); } catch (Exception ex) { Console.WriteLine("[SMTP] Error: " + ex.Message); }
+        try { await SmtpMailService.SendOtpAsync(email, username, otpCode, "verify"); } catch { Console.WriteLine("[SMTP] send failed."); }
         return Results.Ok(new { status = "otp_required", pendingToken = username, message = "Check your email for a verification code." });
     }
     return Results.Ok(new { status = "ok", redirect = "/chatt" });
+});
+
+UnlockEndpoint.Register(app);
+
+
+// rs-legacy-password-auth-block-v1
+var legacyPasswordAuthEndpoints = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+{
+    "/api/auth/login",
+    "/api/auth/forgot-password",
+    "/api/auth/change-password",
+    "/api/auth/login-with-key"
+};
+
+app.Use(async (ctx, next) =>
+{
+    var path = ctx.Request.Path.Value ?? "";
+
+    if (ctx.Request.Method.Equals("POST", System.StringComparison.OrdinalIgnoreCase)
+        && legacyPasswordAuthEndpoints.Contains(path))
+    {
+        ctx.Response.StatusCode = 410;
+        await ctx.Response.WriteAsJsonAsync(new
+        {
+            status = "disabled",
+            message = "Legacy password authentication is disabled. Use Account Key unlock or Account Recovery instead."
+        });
+        return;
+    }
+
+    await next();
 });
 
 app.MapPost("/api/auth/login", async (HttpContext ctx) =>
@@ -622,14 +869,23 @@ app.MapPost("/api/auth/login", async (HttpContext ctx) =>
     var devMgr = ctx.RequestServices.GetRequiredService<DeviceFingerprintManager>();
     var threat = ctx.RequestServices.GetRequiredService<ThreatIntelligence>();
     var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-    var ua = ctx.Request.Headers.UserAgent.ToString();
-    var deviceFp = ctx.Request.Headers["X-Device-Fingerprint"].ToString();
+    var ua = DefensiveInput.CleanString(ctx.Request.Headers.UserAgent.ToString(), 512);
+    var deviceFp = DefensiveInput.CleanString(ctx.Request.Headers["X-Device-Fingerprint"].ToString(), 256);
     var req = await ctx.Request.ReadFromJsonAsync<LoginReq>();
     if (req == null || string.IsNullOrWhiteSpace(req.Username) || string.IsNullOrWhiteSpace(req.Password))
         return Results.BadRequest(new { message = "Krävs" });
-    if (!string.IsNullOrWhiteSpace(req.Email)) { await Task.Delay(RandomNumberGenerator.GetInt32(1000, 3000)); return Results.Unauthorized(); }
+
+    // rs-login-input-defensive-v1
+    var username = DefensiveInput.CleanString(req.Username, 32).ToLowerInvariant();
+    var password = req.Password;
+
+    if (!DefensiveInput.IsUsername(username) || !AppHelpers.IsValidUsername(username))
+        return Results.BadRequest(new { message = "Ogiltigt användarnamn." });
+
+    if (!DefensiveInput.IsSafePasswordInput(password))
+        return Results.BadRequest(new { message = "Ogiltigt lösenord." });
+
     if (brute.IsIpLocked(ip)) return Results.Json(new { message = "IP låst." }, statusCode: 429);
-    var username = req.Username.Trim().ToLowerInvariant();
     threat.RecordLoginAttempt(ip, username);
     if (DecoyAccountManager.IsDecoy(username)) { threat.RecordStrike(ip, "decoy"); BCrypt.Net.BCrypt.HashPassword("timing"); return Results.Unauthorized(); }
     if (brute.IsAccountLocked(username)) { await Task.Delay(brute.GetProgressiveDelay(username)); return Results.Unauthorized(); }
@@ -650,12 +906,49 @@ app.MapPost("/api/auth/login", async (HttpContext ctx) =>
         return Results.Json(new { message = "Kontot låst." }, statusCode: 423);
     if (status?.Trim().Equals("banned", StringComparison.OrdinalIgnoreCase) == true)
         return Results.Json(new { message = "Spärrat." }, statusCode: 403);
-    if (string.IsNullOrWhiteSpace(hash) || !BCrypt.Net.BCrypt.Verify(req.Password + AppConfig.PasswordPepper, hash))
+    var passwordOk = false;
+    var shouldUpgradePasswordHash = false;
+
+    if (!string.IsNullOrWhiteSpace(hash))
     {
+        passwordOk = PasswordHashing.VerifyPassword(password, hash);
+
+        // Temporary migration bridge:
+        // old accounts may have been hashed with the old default pepper or without pepper.
+        if (!passwordOk && PasswordHashing.VerifyDefaultPepperPassword(password, hash))
+        {
+            passwordOk = true;
+            shouldUpgradePasswordHash = true;
+            Console.WriteLine($"[AUTH] password_pipeline_v2 matched default-pepper legacy hash for {username}");
+        }
+
+        if (!passwordOk && PasswordHashing.VerifyLegacyPassword(password, hash))
+        {
+            passwordOk = true;
+            shouldUpgradePasswordHash = true;
+            Console.WriteLine($"[AUTH] password_pipeline_v2 matched no-pepper legacy hash for {username}");
+        }
+    }
+
+    if (!passwordOk)
+    {
+        Console.WriteLine("[AUTH] password_pipeline_v2 wrong_password");
         brute.RecordFailedAttempt(ip, username); threat.RecordStrike(ip, "wrong_password");
         if (brute.GetFailCount(username) >= 10) { using var lck = db.CreateCommand(); lck.CommandText = "UPDATE AuthUsers SET AccountLockedUntil=$l WHERE Username=$u"; lck.Parameters.AddWithValue("$l", DateTime.UtcNow.AddHours(1).ToString("o")); lck.Parameters.AddWithValue("$u", username); lck.ExecuteNonQuery(); }
         return Results.Json(new { status = "error", message = "Incorrect credentials" }, statusCode: 401);
     }
+
+    if (shouldUpgradePasswordHash)
+    {
+        using var uph = db.CreateCommand();
+        uph.CommandText = "UPDATE AuthUsers SET PasswordHash=$h, PasswordChangedAt=$ts WHERE Username=$u";
+        uph.Parameters.AddWithValue("$h", PasswordHashing.HashPassword(password));
+        uph.Parameters.AddWithValue("$ts", DateTime.UtcNow.ToString("o"));
+        uph.Parameters.AddWithValue("$u", username);
+        uph.ExecuteNonQuery();
+        Console.WriteLine($"[AUTH] password_pipeline_v2 upgraded legacy hash for {username}");
+    }
+
     brute.ClearAttempts(ip, username);
     var riskScore = risk.CalculateScore(username, ip, ua, deviceFp, lastIp);
     geo.RecordLogin(username, ip);
@@ -665,8 +958,9 @@ app.MapPost("/api/auth/login", async (HttpContext ctx) =>
     if (riskScore >= 95) return Results.Json(new { status = "blocked", message = "Access temporarily restricted", retryAfter = 300 }, statusCode: 403);
     if (twoFa && !string.IsNullOrWhiteSpace(twoFaSecret))
     {
-        var code = (req.TotpCode ?? "").Trim();
+        var code = DefensiveInput.CleanString(req.TotpCode, 8);
         if (string.IsNullOrWhiteSpace(code)) return Results.Ok(new { status = "otp_required", otpType = "totp", pendingToken = "", message = "Open your authenticator app and enter the code." });
+        if (!DefensiveInput.IsOtpCode(code)) return Results.Json(new { message = "Ogiltig 2FA-kod." }, statusCode: 401);
         if (!TotpHelper.VerifyCode(twoFaSecret, code)) return Results.Json(new { message = "Ogiltig 2FA-kod." }, statusCode: 401);
     }
     // Create claims without SessionId first
@@ -675,8 +969,8 @@ app.MapPost("/api/auth/login", async (HttpContext ctx) =>
     await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)), props);
     
     // Sätt HttpOnly device-trust cookie – backend är ensam källa till trusted status
-    var deviceToken = ctx.Request.Headers["X-Device-Token"].FirstOrDefault() ?? "";
-    if (!string.IsNullOrWhiteSpace(deviceToken)) {
+    var deviceToken = DefensiveInput.CleanString(ctx.Request.Headers["X-Device-Token"].FirstOrDefault(), 256);
+    if (!string.IsNullOrWhiteSpace(deviceToken) && DefensiveInput.IsSafeToken(deviceToken, 256)) {
         ctx.Response.Cookies.Append("rs-dt", deviceToken, new CookieOptions {
             HttpOnly  = true,
             Secure    = true,
@@ -709,11 +1003,14 @@ app.MapPost("/api/auth/logout-all", async (HttpContext ctx) =>
 
 app.MapGet("/api/me/devices", (HttpContext ctx) =>
 {
-    var username = ctx.User?.Identity?.Name;
+    var username = ctx.User?.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(username))
         return Results.Unauthorized();
 
-    var currentToken = ctx.Request.Headers["X-Device-Token"].FirstOrDefault() ?? "";
+    // rs-me-devices-defensive-v1
+    var currentToken = DefensiveInput.CleanString(ctx.Request.Headers["X-Device-Token"].FirstOrDefault(), 256);
+    if (!DefensiveInput.IsSafeToken(currentToken, 256))
+        currentToken = "";
 
     var devices = new List<object>();
 
@@ -787,8 +1084,9 @@ app.MapGet("/api/auth/device-status", (HttpContext ctx) =>
 {
     // Kontrollerar om device-token cookien matchar en känd enhet i DB
     // Används av login.html för att visa trusted-badge utan localStorage
-    var deviceToken = ctx.Request.Cookies["rs-dt"] ?? "";
-    if (string.IsNullOrWhiteSpace(deviceToken))
+    // rs-device-status-defensive-v1
+    var deviceToken = DefensiveInput.CleanString(ctx.Request.Cookies["rs-dt"], 256);
+    if (string.IsNullOrWhiteSpace(deviceToken) || !DefensiveInput.IsSafeToken(deviceToken, 256))
         return Results.Ok(new { knownDevice = false });
     using var db = DbHelpers.OpenDb();
     using var cmd = db.CreateCommand();
@@ -823,17 +1121,22 @@ app.MapPost("/api/auth/forgot-password", async (HttpContext ctx) =>
 {
     var req = await ctx.Request.ReadFromJsonAsync<ForgotPasswordReq>();
     if (req == null || string.IsNullOrWhiteSpace(req.Email)) return Results.Ok(new { status = "ok" });
+
+    // rs-forgot-password-input-defensive-v1
+    var emailInput = DefensiveInput.CleanString(req.Email, 254).ToLowerInvariant();
+    if (!DefensiveInput.IsEmail(emailInput)) return Results.Ok(new { status = "ok" });
+
     using var db = DbHelpers.OpenDb();
     using var cmd = db.CreateCommand();
     cmd.CommandText = "SELECT Username, Email FROM AuthUsers WHERE Email = @e COLLATE NOCASE LIMIT 1";
-    cmd.Parameters.AddWithValue("@e", req.Email.Trim());
+    cmd.Parameters.AddWithValue("@e", emailInput);
     using var r = cmd.ExecuteReader();
     if (r.Read()) {
         var username = r.GetString(0);
         var email = r.GetString(1);
         r.Close();
         var code = OtpGenerator.GenerateCode();
-        try { await SmtpMailService.SendOtpAsync(email, username, code, "reset"); Console.WriteLine("[SMTP] Mail sent to " + email); } catch (Exception ex) { Console.WriteLine("[SMTP] Error: " + ex.Message); }
+        try { await SmtpMailService.SendOtpAsync(email, username, code, "reset"); } catch { Console.WriteLine("[SMTP] send failed."); }
     }
     return Results.Ok(new { status = "ok", message = "If an account exists, a reset link has been sent" });
 });
@@ -842,19 +1145,29 @@ app.MapPost("/api/auth/resend-otp", async (HttpContext ctx) =>
 {
     var req = await ctx.Request.ReadFromJsonAsync<ResendOtpReq>();
     if (req == null || string.IsNullOrWhiteSpace(req.PendingToken)) return Results.BadRequest(new { status = "error" });
+
+    // rs-resend-otp-input-defensive-v1
+    var pendingToken = DefensiveInput.CleanString(req.PendingToken, 254).ToLowerInvariant();
+    if (!DefensiveInput.IsSafeToken(pendingToken))
+        return Results.BadRequest(new { status = "error" });
+
     return Results.Ok(new { status = "ok", message = "New code sent" });
 });
 
 app.MapPost("/api/auth/verify-otp", async (HttpContext ctx) =>
 {
-    Console.WriteLine("[OTP] verify-otp endpoint HIT!");
     var req = await ctx.Request.ReadFromJsonAsync<VerifyOtpReq>();
-    Console.WriteLine($"[OTP] Request received: PendingToken={req?.PendingToken}, Code={req?.Code?.Substring(0,2)}...");
     if (req == null || string.IsNullOrWhiteSpace(req.PendingToken) || string.IsNullOrWhiteSpace(req.Code))
         return Results.BadRequest(new { status = "error", message = "Ogiltig förfrågan." });
-    var username = req.PendingToken.Trim().ToLowerInvariant();
+
+    // rs-verify-otp-input-defensive-v1
+    var username = DefensiveInput.CleanString(req.PendingToken, 254).ToLowerInvariant();
+    var otpCode = DefensiveInput.CleanString(req.Code, 8);
+    if (!DefensiveInput.IsSafeToken(username) || !DefensiveInput.IsOtpCode(otpCode))
+        return Results.BadRequest(new { status = "error", message = "Ogiltig förfrågan." });
+
     var cacheKey = $"reg_otp:{username}";
-    if (!OtpCache.TryGet(cacheKey, out var stored) || stored != req.Code.Trim())
+    if (!OtpCache.TryGet(cacheKey, out var stored) || stored != otpCode)
         return Results.Json(new { status = "error", message = "Felaktig eller utgången kod." }, statusCode: 400);
     OtpCache.Remove(cacheKey);
     using var db = DbHelpers.OpenDb();
@@ -864,23 +1177,19 @@ app.MapPost("/api/auth/verify-otp", async (HttpContext ctx) =>
     upd.ExecuteNonQuery();
     var identity = new System.Security.Claims.ClaimsIdentity(new[] { new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, username) }, "cookie");
     var principal = new System.Security.Claims.ClaimsPrincipal(identity);
-    Console.WriteLine($"[OTP] About to SignInAsync for user: {username}");
     await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal, new Microsoft.AspNetCore.Authentication.AuthenticationProperties { IsPersistent = true, ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30) });
-    Console.WriteLine($"[OTP] SignInAsync completed");
     
     // Create PersistentSession after OTP verification
     // Wait a bit for cookie to be set by SignInAsync
     await Task.Delay(100);
-    var sessionId = ctx.Request.Cookies[".AspNetCore.Cookies"] ?? ctx.Request.Cookies["runspace_auth"] ?? Guid.NewGuid().ToString("N");
-    Console.WriteLine($"[OTP] SessionId from cookie: {sessionId.Substring(0, 12)}...");
+    var sessionId = ctx.Request.Cookies[".AspNetCore.Cookies"] ?? ctx.Request.Cookies["runspace_auth_v3"] ?? Guid.NewGuid().ToString("N");
     var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-    var userAgent = ctx.Request.Headers["User-Agent"].ToString();
+    var userAgent = DefensiveInput.CleanString(ctx.Request.Headers["User-Agent"].ToString(), 512);
     
-    using (var sessConn = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db"))
+    using (var sessConn = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db"))
     {
         await sessConn.OpenAsync();
         var sessCmd = sessConn.CreateCommand();
-        Console.WriteLine($"[OTP] Creating PersistentSession for {username}, SessionId: {sessionId.Substring(0, 8)}...");
         sessCmd.CommandText = @"
             INSERT INTO PersistentSessions (Username, SessionId, Ip, UserAgent, CreatedAt, LastActivity)
             VALUES (@u, @sid, @ip, @ua, @now, @now)
@@ -891,13 +1200,12 @@ app.MapPost("/api/auth/verify-otp", async (HttpContext ctx) =>
         sessCmd.Parameters.AddWithValue("@ua", userAgent);
         sessCmd.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("o"));
         await sessCmd.ExecuteNonQueryAsync();
-        Console.WriteLine($"[OTP] PersistentSession created successfully");
     }
     
-    Console.WriteLine($"[OTP] Returning success response, redirect to /chatt");
     AppHelpers.LogActivity(username, "verify_email", "OTP verified");
     return Results.Ok(new { status = "ok", redirect = "/chatt" });
 });
+
 
 
 
@@ -905,71 +1213,146 @@ app.MapPost("/api/auth/email/send-code", async (HttpContext ctx) =>
 {
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
+
+    // rs-email-send-code-defensive-v1
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(u, "email_send_code", 5, 3600))
+        return Results.Json(new { error = "För många försök. Vänta en timme." }, statusCode: 429);
+
     var req = await ctx.Request.ReadFromJsonAsync<EmailCodeReq>();
     if (req == null || string.IsNullOrWhiteSpace(req.Email)) return Results.BadRequest(new { error = "Ange en e-postadress." });
-    var email = req.Email.Trim().ToLowerInvariant();
-    if (!System.Text.RegularExpressions.Regex.IsMatch(email, @"^[^\s@]+@[^\s@]+\.[^\s@]+$")) return Results.BadRequest(new { error = "Ogiltig e-postadress." });
+
+    var email = DefensiveInput.CleanString(req.Email, 254).ToLowerInvariant();
+    if (!DefensiveInput.IsEmail(email)) return Results.BadRequest(new { error = "Ogiltig e-postadress." });
+
     var code = RandomNumberGenerator.GetInt32(100000, 999999).ToString();
     OtpCache.Set($"email_otp:{u}", code, TimeSpan.FromMinutes(10));
     OtpCache.Set($"email_otp_addr:{u}", email, TimeSpan.FromMinutes(10));
-    try { await SmtpMailService.SendOtpAsync(email, u, code, "verify"); } catch (Exception ex) { Console.WriteLine("[SMTP] " + ex.Message); return Results.Json(new { error = "Kunde inte skicka e-post." }, statusCode: 500); }
+    try { await SmtpMailService.SendOtpAsync(email, u, code, "verify"); }
+    catch { Console.WriteLine("[SMTP] send failed."); return Results.Json(new { error = "Kunde inte skicka e-post." }, statusCode: 500); }
+
     return Results.Ok(new { message = "Kod skickad." });
 });
+
 
 app.MapPost("/api/auth/email/verify", async (HttpContext ctx) =>
 {
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
+
+    // rs-email-verify-defensive-v1
     var req = await ctx.Request.ReadFromJsonAsync<EmailVerifyReq>();
     if (req == null || string.IsNullOrWhiteSpace(req.Code)) return Results.BadRequest(new { error = "Ange kod." });
-    if (!OtpCache.TryGet($"email_otp:{u}", out var stored) || stored != req.Code.Trim()) return Results.Json(new { error = "Felaktig eller utgången kod." }, statusCode: 400);
-    if (!OtpCache.TryGet($"email_otp_addr:{u}", out var pendingEmail)) return Results.Json(new { error = "Sessionen har gått ut." }, statusCode: 400);
+
+    var code = DefensiveInput.CleanString(req.Code, 8);
+    if (!DefensiveInput.IsOtpCode(code)) return Results.BadRequest(new { error = "Felaktig eller utgången kod." });
+
+    if (!OtpCache.TryGet($"email_otp:{u}", out var stored) || stored != code)
+        return Results.Json(new { error = "Felaktig eller utgången kod." }, statusCode: 400);
+
+    if (!OtpCache.TryGet($"email_otp_addr:{u}", out var pendingEmail))
+        return Results.Json(new { error = "Sessionen har gått ut." }, statusCode: 400);
+
+    pendingEmail = DefensiveInput.CleanString(pendingEmail, 254).ToLowerInvariant();
+    if (!DefensiveInput.IsEmail(pendingEmail))
+        return Results.Json(new { error = "Sessionen har gått ut." }, statusCode: 400);
+
     OtpCache.Remove($"email_otp:{u}");
     OtpCache.Remove($"email_otp_addr:{u}");
+
     using var db = DbHelpers.OpenDb();
     using var upd = db.CreateCommand();
     upd.CommandText = "UPDATE AuthUsers SET Email=$e, EmailVerified=1 WHERE Username=$u";
     upd.Parameters.AddWithValue("$e", pendingEmail);
     upd.Parameters.AddWithValue("$u", u);
     upd.ExecuteNonQuery();
+
     AppHelpers.LogActivity(u, "email_verified", "Email verified via settings");
     return Results.Ok(new { message = "E-postadressen har verifierats." });
 });
+
 
 app.MapPost("/api/auth/change-password", async (HttpContext ctx) =>
 {
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
+
     var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
     if (!limiter.IsAllowed(u, "change_password", 3, 3600)) return Results.Json(new { message = "Vänta." }, statusCode: 429);
+
     var req = await ctx.Request.ReadFromJsonAsync<ChangeReq>();
-    if (req == null || string.IsNullOrWhiteSpace(req.OldPassword) || string.IsNullOrWhiteSpace(req.NewPassword)) return Results.BadRequest(new { message = "Alla fält krävs" });
-    var check = PasswordPolicy.Validate(req.NewPassword);
+    if (req == null || string.IsNullOrWhiteSpace(req.OldPassword) || string.IsNullOrWhiteSpace(req.NewPassword))
+        return Results.BadRequest(new { message = "Alla fält krävs" });
+
+    // rs-change-password-defensive-v1
+    // Passwords must not be cleaned or trimmed. Only bound length/null bytes before BCrypt.
+    var oldPassword = req.OldPassword;
+    var newPassword = req.NewPassword;
+
+    if (!DefensiveInput.IsSafePasswordInput(oldPassword))
+        return Results.BadRequest(new { message = "Ogiltigt lösenord." });
+
+    if (!DefensiveInput.IsSafePasswordInput(newPassword))
+        return Results.BadRequest(new { message = "Ogiltigt lösenord." });
+
+    var check = PasswordPolicy.Validate(newPassword);
     if (!check.Valid) return Results.BadRequest(new { message = check.Message });
-    if (req.OldPassword == req.NewPassword) return Results.BadRequest(new { message = "Måste skilja sig." });
+
+    if (oldPassword == newPassword) return Results.BadRequest(new { message = "Måste skilja sig." });
+
     using var db = DbHelpers.OpenDb();
-    using var get = db.CreateCommand(); get.CommandText = "SELECT PasswordHash FROM AuthUsers WHERE Username=$u LIMIT 1"; get.Parameters.AddWithValue("$u", u);
+    using var get = db.CreateCommand();
+    get.CommandText = "SELECT PasswordHash FROM AuthUsers WHERE Username=$u LIMIT 1";
+    get.Parameters.AddWithValue("$u", u);
     var cur = get.ExecuteScalar() as string;
-    if (!BCrypt.Net.BCrypt.Verify(req.OldPassword + AppConfig.PasswordPepper, cur ?? "")) return Results.BadRequest(new { message = "Gammalt lösenord fel" });
-    var newHash = BCrypt.Net.BCrypt.HashPassword(req.NewPassword + AppConfig.PasswordPepper, workFactor: 12);
-    if (PasswordHistory.WasUsedBefore(u, req.NewPassword + AppConfig.PasswordPepper)) return Results.BadRequest(new { message = "Använt tidigare." });
-    using var upd = db.CreateCommand(); upd.CommandText = "UPDATE AuthUsers SET PasswordHash=$p, PasswordChangedAt=$t WHERE Username=$u";
-    upd.Parameters.AddWithValue("$p", newHash); upd.Parameters.AddWithValue("$t", DateTime.UtcNow.ToString("o")); upd.Parameters.AddWithValue("$u", u); upd.ExecuteNonQuery();
+
+    if (string.IsNullOrWhiteSpace(cur) || !PasswordHashing.VerifyPassword(oldPassword, cur))
+        return Results.BadRequest(new { message = "Gammalt lösenord fel" });
+
+    if (PasswordHistory.WasUsedBefore(u, newPassword + AppConfig.PasswordPepper))
+        return Results.BadRequest(new { message = "Använt tidigare." });
+
+    var newHash = PasswordHashing.HashPassword(newPassword);
+
+    using var upd = db.CreateCommand();
+    upd.CommandText = "UPDATE AuthUsers SET PasswordHash=$p, PasswordChangedAt=$t WHERE Username=$u";
+    upd.Parameters.AddWithValue("$p", newHash);
+    upd.Parameters.AddWithValue("$t", DateTime.UtcNow.ToString("o"));
+    upd.Parameters.AddWithValue("$u", u);
+    upd.ExecuteNonQuery();
+
     PasswordHistory.Save(u, newHash);
     ctx.RequestServices.GetRequiredService<SessionManager>().InvalidateAllSessions(u);
+
     return Results.Ok(new { success = true, message = "Lösenordet ändrat." });
 });
 
-// 2FA
+
 app.MapPost("/api/auth/2fa/setup", async (HttpContext ctx) =>
 {
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (string.IsNullOrWhiteSpace(u)) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
+
+    // rs-2fa-setup-defensive-v1
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(u, "2fa_setup", 5, 3600))
+        return Results.Json(new { message = "För många försök. Vänta en stund." }, statusCode: 429);
+
     var secret = TotpHelper.GenerateSecret();
-    using var db = DbHelpers.OpenDb(); using var cmd = db.CreateCommand();
-    cmd.CommandText = "UPDATE AuthUsers SET TwoFactorSecret=$s WHERE Username=$u"; cmd.Parameters.AddWithValue("$s", secret); cmd.Parameters.AddWithValue("$u", u); cmd.ExecuteNonQuery();
-    var codes = Enumerable.Range(0, 8).Select(_ => Convert.ToHexString(RandomNumberGenerator.GetBytes(4))).ToArray();
+
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
+    cmd.CommandText = "UPDATE AuthUsers SET TwoFactorSecret=$s WHERE Username=$u";
+    cmd.Parameters.AddWithValue("$s", secret);
+    cmd.Parameters.AddWithValue("$u", u);
+    cmd.ExecuteNonQuery();
+
+    var codes = Enumerable.Range(0, 8)
+        .Select(_ => Convert.ToHexString(RandomNumberGenerator.GetBytes(4)))
+        .ToArray();
+
     TotpHelper.SaveBackupCodes(u, codes);
+
     var otpauthUrl = $"otpauth://totp/RunSpace:{u}?secret={secret}&issuer=RunSpace&digits=6&period=30";
 
     using var qrGenerator = new QRCodeGenerator();
@@ -988,37 +1371,141 @@ app.MapPost("/api/auth/2fa/setup", async (HttpContext ctx) =>
     });
 });
 
+
 app.MapPost("/api/auth/2fa/verify", async (HttpContext ctx) =>
 {
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (string.IsNullOrWhiteSpace(u)) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
+
+    // rs-2fa-verify-defensive-v1
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(u, "2fa_verify", 10, 900))
+        return Results.Json(new { message = "För många försök. Vänta en stund." }, statusCode: 429);
+
     var req = await ctx.Request.ReadFromJsonAsync<TwoFactorVerifyReq>();
-    if (req == null || string.IsNullOrWhiteSpace(req.Code)) return Results.BadRequest(new { message = "Kod krävs." });
-    using var db = DbHelpers.OpenDb(); using var get = db.CreateCommand();
-    get.CommandText = "SELECT TwoFactorSecret FROM AuthUsers WHERE Username=$u LIMIT 1"; get.Parameters.AddWithValue("$u", u);
-    var secret = get.ExecuteScalar() as string ?? "";
-    Console.WriteLine($"[2FA VERIFY] user={u} code={req.Code.Trim()} secret={secret} utc={DateTime.UtcNow:o}");
-    if (!TotpHelper.VerifyCode(secret, req.Code.Trim()))
-    {
-        Console.WriteLine("[2FA VERIFY] INVALID");
+    if (req == null || string.IsNullOrWhiteSpace(req.Code))
+        return Results.BadRequest(new { message = "Kod krävs." });
+
+    var code = DefensiveInput.CleanString(req.Code, 8);
+    if (!DefensiveInput.IsOtpCode(code))
         return Results.BadRequest(new { message = "Ogiltig kod." });
+
+    using var db = DbHelpers.OpenDb();
+    using var get = db.CreateCommand();
+    get.CommandText = "SELECT TwoFactorSecret FROM AuthUsers WHERE Username=$u LIMIT 1";
+    get.Parameters.AddWithValue("$u", u);
+    var secret = get.ExecuteScalar() as string ?? "";
+
+    if (string.IsNullOrWhiteSpace(secret))
+        return Results.BadRequest(new { message = "2FA är inte konfigurerat." });
+
+    if (!TotpHelper.VerifyCode(secret, code))
+        return Results.BadRequest(new { message = "Ogiltig kod." });
+
+    DbHelpers.EnsureColumn(db, "AuthUsers", "SecurityChangedAt", "TEXT NOT NULL DEFAULT ''");
+
+    using var en = db.CreateCommand();
+    en.CommandText = "UPDATE AuthUsers SET TwoFactorEnabled=1, SecurityChangedAt=$sc WHERE Username=$u";
+    en.Parameters.AddWithValue("$sc", DateTime.UtcNow.ToString("o"));
+    en.Parameters.AddWithValue("$u", u);
+    en.ExecuteNonQuery();
+
+    // rs-2fa-enable-kill-sessions-v1
+    using (var delSessions = db.CreateCommand())
+    {
+        delSessions.CommandText = "DELETE FROM PersistentSessions WHERE LOWER(Username)=LOWER($u)";
+        delSessions.Parameters.AddWithValue("$u", u);
+        delSessions.ExecuteNonQuery();
     }
-    Console.WriteLine("[2FA VERIFY] VALID");
-    using var en = db.CreateCommand(); en.CommandText = "UPDATE AuthUsers SET TwoFactorEnabled=1 WHERE Username=$u"; en.Parameters.AddWithValue("$u", u); en.ExecuteNonQuery();
-    return Results.Ok(new { success = true });
+
+    ctx.RequestServices.GetRequiredService<SessionManager>().InvalidateAllSessions(u);
+
+    await ctx.SignOutAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme);
+    ctx.Response.Cookies.Delete("runspace_auth_v3");
+    ctx.Response.Cookies.Delete("runspace_auth_v2");
+    ctx.Response.Cookies.Delete("runspace_auth");
+    ctx.Response.Cookies.Delete("rs-dt");
+
+    AppHelpers.LogActivity(u, "2fa_enabled", $"From {ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown"}");
+
+    return Results.Ok(new
+    {
+        success = true,
+        loggedOut = true,
+        message = "2FA enabled. Existing sessions were logged out."
+    });
 });
+
 
 app.MapPost("/api/auth/2fa/disable", async (HttpContext ctx) =>
 {
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (string.IsNullOrWhiteSpace(u)) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
+
+    // rs-2fa-disable-defensive-v1
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(u, "2fa_disable", 5, 3600))
+        return Results.Json(new { message = "För många försök. Vänta en stund." }, statusCode: 429);
+
     var req = await ctx.Request.ReadFromJsonAsync<TwoFactorVerifyReq>();
-    if (req == null || string.IsNullOrWhiteSpace(req.Code)) return Results.BadRequest(new { message = "Kod krävs." });
-    using var db = DbHelpers.OpenDb(); using var get = db.CreateCommand();
-    get.CommandText = "SELECT TwoFactorSecret FROM AuthUsers WHERE Username=$u LIMIT 1"; get.Parameters.AddWithValue("$u", u);
-    if (!TotpHelper.VerifyCode(get.ExecuteScalar() as string ?? "", req.Code.Trim())) return Results.BadRequest(new { message = "Ogiltig kod." });
-    using var dis = db.CreateCommand(); dis.CommandText = "UPDATE AuthUsers SET TwoFactorEnabled=0, TwoFactorSecret='' WHERE Username=$u"; dis.Parameters.AddWithValue("$u", u); dis.ExecuteNonQuery();
-    return Results.Ok(new { success = true });
+    if (req == null || string.IsNullOrWhiteSpace(req.Code))
+        return Results.BadRequest(new { message = "Kod krävs." });
+
+    var code = DefensiveInput.CleanString(req.Code, 8);
+    if (!DefensiveInput.IsOtpCode(code))
+        return Results.BadRequest(new { message = "Ogiltig kod." });
+
+    using var db = DbHelpers.OpenDb();
+    using var get = db.CreateCommand();
+    get.CommandText = "SELECT TwoFactorSecret FROM AuthUsers WHERE Username=$u LIMIT 1";
+    get.Parameters.AddWithValue("$u", u);
+    var secret = get.ExecuteScalar() as string ?? "";
+
+    if (string.IsNullOrWhiteSpace(secret))
+        return Results.BadRequest(new { message = "2FA är inte konfigurerat." });
+
+    if (!TotpHelper.VerifyCode(secret, code))
+        return Results.BadRequest(new { message = "Ogiltig kod." });
+
+    DbHelpers.EnsureColumn(db, "AuthUsers", "SecurityChangedAt", "TEXT NOT NULL DEFAULT ''");
+
+    using var dis = db.CreateCommand();
+    dis.CommandText = "UPDATE AuthUsers SET TwoFactorEnabled=0, TwoFactorSecret='', SecurityChangedAt=$sc WHERE Username=$u";
+    dis.Parameters.AddWithValue("$sc", DateTime.UtcNow.ToString("o"));
+    dis.Parameters.AddWithValue("$u", u);
+    dis.ExecuteNonQuery();
+
+    // rs-2fa-disable-kill-sessions-v1
+    using (var delCodes = db.CreateCommand())
+    {
+        delCodes.CommandText = "DELETE FROM BackupCodes WHERE LOWER(Username)=LOWER($u)";
+        delCodes.Parameters.AddWithValue("$u", u);
+        delCodes.ExecuteNonQuery();
+    }
+
+    using (var delSessions = db.CreateCommand())
+    {
+        delSessions.CommandText = "DELETE FROM PersistentSessions WHERE LOWER(Username)=LOWER($u)";
+        delSessions.Parameters.AddWithValue("$u", u);
+        delSessions.ExecuteNonQuery();
+    }
+
+    ctx.RequestServices.GetRequiredService<SessionManager>().InvalidateAllSessions(u);
+
+    await ctx.SignOutAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme);
+    ctx.Response.Cookies.Delete("runspace_auth_v3");
+    ctx.Response.Cookies.Delete("runspace_auth_v2");
+    ctx.Response.Cookies.Delete("runspace_auth");
+    ctx.Response.Cookies.Delete("rs-dt");
+
+    AppHelpers.LogActivity(u, "2fa_disabled", $"From {ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown"}");
+
+    return Results.Ok(new
+    {
+        success = true,
+        loggedOut = true,
+        message = "2FA disabled. Existing sessions were logged out."
+    });
 });
 
 app.MapGet("/api/auth/login-history", (HttpContext ctx) =>
@@ -1033,31 +1520,50 @@ app.MapGet("/api/auth/sessions", (HttpContext ctx) =>
     return string.IsNullOrWhiteSpace(u) ? Results.Unauthorized() : Results.Ok(ctx.RequestServices.GetRequiredService<SessionManager>().GetUserSessions(u));
 });
 
+
 app.MapDelete("/api/auth/sessions/{sessionId}", (string sessionId, HttpContext ctx) =>
 {
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(u)) return Results.Unauthorized();
-    ctx.RequestServices.GetRequiredService<SessionManager>().InvalidateSpecificSession(u, sessionId);
+
+    // rs-session-delete-defensive-v1
+    var sid = DefensiveInput.CleanString(sessionId, 128);
+    if (!DefensiveInput.IsSafeSessionId(sid))
+        return Results.BadRequest(new { message = "Invalid session id." });
+
+    ctx.RequestServices.GetRequiredService<SessionManager>().InvalidateSpecificSession(u, sid);
     return Results.Ok(new { success = true });
 });
+
 
 app.MapPost("/api/auth/freeze", async (HttpContext ctx) =>
 {
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(u)) return Results.Unauthorized();
-    var req = await ctx.Request.ReadFromJsonAsync<FreezeReq>();
+
+    // rs-freeze-defensive-v1
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(u, "account_freeze", 3, 3600))
+        return Results.Json(new { message = "För många försök. Vänta en stund." }, statusCode: 429);
+
+    FreezeReq? req;
+    try { req = await ctx.Request.ReadFromJsonAsync<FreezeReq>(); }
+    catch { return Results.BadRequest(new { message = "Invalid request." }); }
+
     var hours = Math.Clamp(req?.Hours ?? 24, 1, 720);
-    using var db = DbHelpers.OpenDb(); using var cmd = db.CreateCommand();
+
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
     cmd.CommandText = "UPDATE AuthUsers SET AccountLockedUntil=$l WHERE Username=$u";
-    cmd.Parameters.AddWithValue("$l", DateTime.UtcNow.AddHours(hours).ToString("o")); cmd.Parameters.AddWithValue("$u", u); cmd.ExecuteNonQuery();
+    cmd.Parameters.AddWithValue("$l", DateTime.UtcNow.AddHours(hours).ToString("o"));
+    cmd.Parameters.AddWithValue("$u", u);
+    cmd.ExecuteNonQuery();
+
     ctx.RequestServices.GetRequiredService<SessionManager>().InvalidateAllSessions(u);
     await ctx.SignOutAsync();
+
     return Results.Ok(new { success = true, message = $"Fryst i {hours}h." });
 });
-
-// ═══════════════════════════════════════════════
-// PROFILE + SEARCH
-// ═══════════════════════════════════════════════
 
 app.MapGet("/api/profile", async (HttpContext ctx) =>
 {
@@ -1077,12 +1583,15 @@ app.MapGet("/api/profile/public/{username}", (string username, HttpContext ctx) 
     var t = (username ?? "").Trim().ToLowerInvariant();
     if (!AppHelpers.IsValidUsername(t)) return Results.BadRequest(new { message = "Ogiltigt." });
     using var db = DbHelpers.OpenDb(); using var cmd = db.CreateCommand();
-    cmd.CommandText = "SELECT Username,Bio,AvatarUrl,CreatedAt,Status,Badges,Links,BannerUrl,IsSuspended,IsPremium,PremiumPlan FROM AuthUsers WHERE Username=$u LIMIT 1"; cmd.Parameters.AddWithValue("$u", t);
+    cmd.CommandText = "SELECT Username,Bio,AvatarUrl,CreatedAt,Status,Badges,Links,BannerUrl,IsSuspended,IsPremium,PremiumPlan,aura_score,aura_active_days,aura_last_active_date FROM AuthUsers WHERE Username=$u LIMIT 1"; cmd.Parameters.AddWithValue("$u", t);
     using var r = cmd.ExecuteReader(); if (!r.Read()) return Results.NotFound(new { message = "Ej hittad" });
     var ca = r.IsDBNull(3) ? "" : r.GetString(3);
     var _isSusp = !r.IsDBNull(8) && r.GetInt32(8) == 1;
     var _uname=r.GetString(0);var _bio=r.IsDBNull(1)?"":r.GetString(1);var _av=r.IsDBNull(2)?"":r.GetString(2);var _stat=r.IsDBNull(4)?"verified":r.GetString(4);var _badges=r.IsDBNull(5)?"[]":r.GetString(5);var _links=r.IsDBNull(6)?"[]":r.GetString(6);var _banner=r.IsDBNull(7)?"":r.GetString(7);
     var _premiumState = PremiumAccess.GetForUsername(_uname);
+    var _auraScore = r.IsDBNull(11) ? 0.0 : Convert.ToDouble(r.GetValue(11));
+    var _auraActiveDays = r.IsDBNull(12) ? 0 : Convert.ToInt32(r.GetValue(12));
+    var _auraLastActiveDate = r.IsDBNull(13) ? "" : r.GetString(13);
     r.Close();
     // Check trust level separately
     using var trustCmd = db.CreateCommand();
@@ -1109,34 +1618,194 @@ app.MapGet("/api/profile/public/{username}", (string username, HttpContext ctx) 
         _premiumPlan = premR.IsDBNull(1) ? "" : premR.GetString(1);
     }
     premR.Close();
-    return Results.Ok(new { username = _uname, bio = InputSanitizer.SanitizeOutput(_bio), avatarUrl = InputSanitizer.SanitizeUrl(_av), createdAt = ca, age = AppHelpers.GetAgeTextFromCreatedAt(ca), status = _stat, badges = AppHelpers.ParseBadges(_badges), links = _links, bannerUrl = _banner, isSuspended = _isSusp, isRestricted = _isRestricted, publicId = _publicId, isPremium = _premiumState.IsPremium, premiumPlan = _premiumState.Plan });
+    long _followersCount = 0;
+    long _followingCount = 0;
+    bool _isFollowing = false;
+
+    using (var fc = db.CreateCommand()) {
+        fc.CommandText = "SELECT COUNT(*) FROM ProfileFollows WHERE TargetUserId=(SELECT Id FROM AuthUsers WHERE Username=$u LIMIT 1)";
+        fc.Parameters.AddWithValue("$u", t);
+        _followersCount = (long)(fc.ExecuteScalar() ?? 0L);
+    }
+
+    using (var fg = db.CreateCommand()) {
+        fg.CommandText = "SELECT COUNT(*) FROM ProfileFollows WHERE FollowerUserId=(SELECT Id FROM AuthUsers WHERE Username=$u LIMIT 1)";
+        fg.Parameters.AddWithValue("$u", t);
+        _followingCount = (long)(fg.ExecuteScalar() ?? 0L);
+    }
+
+    var _viewer = ctx.User.Identity?.Name?.Trim().ToLowerInvariant() ?? "";
+    if (!string.IsNullOrWhiteSpace(_viewer)) {
+        using var ifc = db.CreateCommand();
+        ifc.CommandText = @"
+            SELECT COUNT(*)
+            FROM ProfileFollows
+            WHERE FollowerUserId=(SELECT Id FROM AuthUsers WHERE Username=$viewer LIMIT 1)
+              AND TargetUserId=(SELECT Id FROM AuthUsers WHERE Username=$target LIMIT 1)";
+        ifc.Parameters.AddWithValue("$viewer", _viewer);
+        ifc.Parameters.AddWithValue("$target", t);
+        _isFollowing = Convert.ToInt64(ifc.ExecuteScalar() ?? 0L) > 0;
+    }
+
+    return Results.Ok(new { username = _uname, bio = InputSanitizer.SanitizeOutput(_bio), avatarUrl = InputSanitizer.SanitizeUrl(_av), createdAt = ca, age = AppHelpers.GetAgeTextFromCreatedAt(ca), status = _stat, badges = AppHelpers.ParseBadges(_badges), links = _links, bannerUrl = _banner, isSuspended = _isSusp, isRestricted = _isRestricted, publicId = _publicId, isPremium = _premiumState.IsPremium, premiumPlan = _premiumState.Plan, followersCount = _followersCount, followingCount = _followingCount, isFollowing = _isFollowing, auraScore = Math.Round(_auraScore, 1), auraActiveDays = _auraActiveDays, auraLastActiveDate = _auraLastActiveDate, aura = new { score = Math.Round(_auraScore, 1), activeDays = _auraActiveDays, lastActiveDate = _auraLastActiveDate } });
+});
+
+
+app.MapPost("/api/profile/follow/{username}", (string username, HttpContext ctx) =>
+{
+    var viewer = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(viewer) || !AppHelpers.UserExists(viewer)) return Results.Unauthorized();
+
+    var target = (username ?? "").Trim().ToLowerInvariant();
+    if (!AppHelpers.IsValidUsername(target)) return Results.BadRequest(new { message = "Ogiltigt användarnamn." });
+    if (viewer == target) return Results.BadRequest(new { message = "Du kan inte följa dig själv." });
+
+    using var db = DbHelpers.OpenDb();
+
+    using var cmd = db.CreateCommand();
+    cmd.CommandText = @"
+        INSERT OR IGNORE INTO ProfileFollows (FollowerUserId, TargetUserId)
+        SELECT f.Id, t.Id
+        FROM AuthUsers f, AuthUsers t
+        WHERE f.Username=$viewer AND t.Username=$target";
+    cmd.Parameters.AddWithValue("$viewer", viewer);
+    cmd.Parameters.AddWithValue("$target", target);
+    cmd.ExecuteNonQuery();
+
+    using var count = db.CreateCommand();
+    count.CommandText = "SELECT COUNT(*) FROM ProfileFollows WHERE TargetUserId=(SELECT Id FROM AuthUsers WHERE Username=$target LIMIT 1)";
+    count.Parameters.AddWithValue("$target", target);
+    var followersCount = (long)(count.ExecuteScalar() ?? 0L);
+
+    return Results.Ok(new { ok = true, isFollowing = true, followersCount });
+});
+
+app.MapDelete("/api/profile/follow/{username}", (string username, HttpContext ctx) =>
+{
+    var viewer = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(viewer) || !AppHelpers.UserExists(viewer)) return Results.Unauthorized();
+
+    var target = (username ?? "").Trim().ToLowerInvariant();
+    if (!AppHelpers.IsValidUsername(target)) return Results.BadRequest(new { message = "Ogiltigt användarnamn." });
+
+    using var db = DbHelpers.OpenDb();
+
+    using var cmd = db.CreateCommand();
+    cmd.CommandText = @"
+        DELETE FROM ProfileFollows
+        WHERE FollowerUserId=(SELECT Id FROM AuthUsers WHERE Username=$viewer LIMIT 1)
+          AND TargetUserId=(SELECT Id FROM AuthUsers WHERE Username=$target LIMIT 1)";
+    cmd.Parameters.AddWithValue("$viewer", viewer);
+    cmd.Parameters.AddWithValue("$target", target);
+    cmd.ExecuteNonQuery();
+
+    using var count = db.CreateCommand();
+    count.CommandText = "SELECT COUNT(*) FROM ProfileFollows WHERE TargetUserId=(SELECT Id FROM AuthUsers WHERE Username=$target LIMIT 1)";
+    count.Parameters.AddWithValue("$target", target);
+    var followersCount = (long)(count.ExecuteScalar() ?? 0L);
+
+    return Results.Ok(new { ok = true, isFollowing = false, followersCount });
 });
 
 app.MapPost("/api/profile/update", async (HttpContext ctx) =>
 {
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
-    using var profileDoc = await JsonDocument.ParseAsync(ctx.Request.Body);
-var profileRoot = profileDoc.RootElement;
 
-string? GetProfileString(string name)
-{
-    if (!profileRoot.TryGetProperty(name, out var el)) return null;
-    return el.ValueKind == JsonValueKind.String ? el.GetString() : el.ToString();
-}
+    // rs-profile-update-defensive-v1
+    // Keep profile fields small, predictable, and safe before storage.
+    // rs-profile-update-json-guard-v1
+    System.Text.Json.JsonElement profileRoot;
+    try
+    {
+        using var profileDoc = await JsonDocument.ParseAsync(ctx.Request.Body);
+        profileRoot = profileDoc.RootElement.Clone();
+    }
+    catch
+    {
+        return Results.BadRequest(new { message = "Invalid JSON request." });
+    }
 
-var req = new ProfileReq(
-    GetProfileString("bio"),
-    GetProfileString("nationality"),
-    GetProfileString("languages"),
-    profileRoot.TryGetProperty("links", out var linksEl)
-        ? (linksEl.ValueKind == JsonValueKind.String ? (linksEl.GetString() ?? "[]") : linksEl.GetRawText())
-        : "[]"
-);
-    var bio = InputSanitizer.SanitizeInput(req?.Bio ?? "", 500);
+    if (profileRoot.ValueKind != JsonValueKind.Object)
+        return Results.BadRequest(new { message = "Invalid profile body." });
+
+    string GetProfileString(string name, int maxLen)
+    {
+        if (!profileRoot.TryGetProperty(name, out var el)) return "";
+        if (el.ValueKind == JsonValueKind.Null || el.ValueKind == JsonValueKind.Undefined) return "";
+        if (el.ValueKind != JsonValueKind.String) return "";
+        return DefensiveInput.CleanString(el.GetString(), maxLen);
+    }
+
+    string NormalizeProfileLinks()
+    {
+        if (!profileRoot.TryGetProperty("links", out var linksEl))
+            return "[]";
+
+        string raw;
+
+        if (linksEl.ValueKind == JsonValueKind.String)
+            raw = linksEl.GetString() ?? "[]";
+        else if (linksEl.ValueKind == JsonValueKind.Array)
+            raw = linksEl.GetRawText();
+        else
+            return "[]";
+
+        raw = raw.Trim();
+
+        if (raw.Length == 0) return "[]";
+        if (raw.Length > 4000) return "[]";
+        if (raw.Contains('\0')) return "[]";
+
+        var lowered = raw.ToLowerInvariant();
+        if (lowered.Contains("javascript:") || lowered.Contains("data:") || lowered.Contains("vbscript:"))
+            return "[]";
+
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+                return "[]";
+
+            if (doc.RootElement.GetArrayLength() > 8)
+                return "[]";
+
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                var itemRaw = item.GetRawText();
+                if (itemRaw.Length > 700 || itemRaw.Contains('\0'))
+                    return "[]";
+
+                var itemLower = itemRaw.ToLowerInvariant();
+                if (itemLower.Contains("javascript:") || itemLower.Contains("data:") || itemLower.Contains("vbscript:"))
+                    return "[]";
+            }
+
+            return doc.RootElement.GetRawText();
+        }
+        catch
+        {
+            return "[]";
+        }
+    }
+
+    var bio = GetProfileString("bio", 500);
     if (ContentFilter.IsOffensive(bio)) return Results.BadRequest(new { message = "Otillåtet." });
-    using var db = DbHelpers.OpenDb(); using var cmd = db.CreateCommand();
-    var nat = InputSanitizer.SanitizeInput(req?.Nationality ?? "", 2); var langs = InputSanitizer.SanitizeInput(req?.Languages ?? "", 50); cmd.CommandText = "UPDATE AuthUsers SET Bio=$b, Nationality=$n, Languages=$l, Links=$links WHERE Username=$u"; cmd.Parameters.AddWithValue("$b", bio); cmd.Parameters.AddWithValue("$n", nat); cmd.Parameters.AddWithValue("$l", langs); var linksJson = req?.Links ?? "[]"; try { JsonSerializer.Deserialize<List<object>>(linksJson); } catch { linksJson = "[]"; } cmd.Parameters.AddWithValue("$links", linksJson); cmd.Parameters.AddWithValue("$u", u); cmd.ExecuteNonQuery();
+
+    var nat = GetProfileString("nationality", 4);
+    var langs = GetProfileString("languages", 50);
+    var linksJson = NormalizeProfileLinks();
+
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
+    cmd.CommandText = "UPDATE AuthUsers SET Bio=$b, Nationality=$n, Languages=$l, Links=$links WHERE Username=$u";
+    cmd.Parameters.AddWithValue("$b", bio);
+    cmd.Parameters.AddWithValue("$n", nat);
+    cmd.Parameters.AddWithValue("$l", langs);
+    cmd.Parameters.AddWithValue("$links", linksJson);
+    cmd.Parameters.AddWithValue("$u", u);
+    cmd.ExecuteNonQuery();
+
     return Results.Ok(new { success = true });
 });
 
@@ -1149,7 +1818,10 @@ app.MapPost("/api/profile/avatar/upload", async (HttpContext ctx) =>
     if (!ctx.Request.HasFormContentType) return Results.BadRequest(new { error = "form-data krävs" });
     var form = await ctx.Request.ReadFormAsync(); var file = form.Files["avatar"];
     if (file == null || file.Length == 0 || file.Length > 5 * 1024 * 1024) return Results.BadRequest(new { error = "Fil saknas eller för stor." });
-    var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+
+    // rs-upload-filename-defensive-v2-avatar
+    var originalName = DefensiveInput.SafeFileName(file.FileName);
+    var ext = Path.GetExtension(originalName).ToLowerInvariant();
     if (!new[] { ".png",".jpg",".jpeg",".gif",".webp" }.Contains(ext)) return Results.BadRequest(new { error = "Ogiltigt format" });
     if (!await FileValidator.IsValidImageAsync(file)) return Results.BadRequest(new { error = "Ej giltig bild." });
     var fn = $"{Convert.ToHexString(RandomNumberGenerator.GetBytes(16))}{ext}";
@@ -1177,7 +1849,10 @@ app.MapPost("/api/profile/banner/upload", async (HttpContext ctx) =>
 
     var form = await ctx.Request.ReadFormAsync(); var file = form.Files["banner"];
     if (file == null || file.Length == 0 || file.Length > 8 * 1024 * 1024) return Results.BadRequest(new { error = "Fil saknas eller för stor (max 8MB)." });
-    var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+
+    // rs-upload-filename-defensive-v2-banner
+    var originalName = DefensiveInput.SafeFileName(file.FileName);
+    var ext = Path.GetExtension(originalName).ToLowerInvariant();
     if (!new[] { ".png",".jpg",".jpeg",".gif",".webp" }.Contains(ext)) return Results.BadRequest(new { error = "Ogiltigt format" });
     var fn = $"banner_{Convert.ToHexString(RandomNumberGenerator.GetBytes(16))}{ext}";
     var path = Path.Combine(AppConfig.AvatarUploadDir, fn);
@@ -1246,7 +1921,13 @@ app.MapGet("/api/chat/reactions/batch", (string ids, HttpContext ctx) =>
     if (!idList.Any()) return Results.Ok(new Dictionary<string, object>());
     using var db = DbHelpers.OpenDb();
     using var cmd = db.CreateCommand();
-    cmd.CommandText = $"SELECT MessageId, Username, Emoji FROM ChatReactions WHERE MessageId IN ({string.Join(",", idList)})";
+
+    var placeholders = idList.Select((_, i) => "$id" + i).ToList();
+    cmd.CommandText = $"SELECT MessageId, Username, Emoji FROM ChatReactions WHERE MessageId IN ({string.Join(",", placeholders)})";
+
+    for (var i = 0; i < idList.Count; i++)
+        cmd.Parameters.AddWithValue("$id" + i, idList[i]);
+
     using var r = cmd.ExecuteReader();
     var result = new Dictionary<string, List<object>>();
     while (r.Read()) {
@@ -1318,96 +1999,341 @@ app.MapPost("/api/reports", async (HttpContext ctx) =>
     return Results.Ok(new { success = true, message = "Rapport skickad." });
 });
 // ═══════════════════════════════════════════════
-app.MapPost("/api/ai/chat", async (HttpContext ctx) =>
+
+// CHAT (DM) MESSAGING + KEYS
+// ═══════════════════════════════════════════════
+
+// ACCOUNT E2EE KEYS
+// Stores encrypted account private-key envelopes for cross-device cloud sync.
+// The server stores ciphertext only.
+app.MapGet("/api/e2ee/account-key", (HttpContext ctx) =>
 {
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
-    var req = await ctx.Request.ReadFromJsonAsync<AiChatReq>();
-    if (req == null || req.Messages == null || !req.Messages.Any()) return Results.BadRequest(new { message = "Ogiltigt." });
-    var apiKey = (Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? "").Trim().Trim('"');
-    if (string.IsNullOrWhiteSpace(apiKey)) return Results.Problem("AI ej konfigurerat.");
-    using var http = new HttpClient();
-    http.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-    var body = System.Text.Json.JsonSerializer.Serialize(new {
-        model = "gpt-4o-mini",
-        messages = new object[] { new { role = "system", content = "You are RunspaceGPT, an AI assistant built into the Runspace chat platform. You were created by the Runspace team. Always respond in the same language the user writes in. Be helpful, friendly, and concise." } }.Concat(req.Messages.TakeLast(40).Select(m => new { role = m.Role, content = m.Content })),
-        max_tokens = 1024
+
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
+    cmd.CommandText = @"
+SELECT PublicKey, EncryptedPrivateKey, Salt, Nonce, Kdf, Iterations, Version, CreatedAt, UpdatedAt
+FROM AccountE2eeKeys
+WHERE Username=$u
+LIMIT 1";
+    cmd.Parameters.AddWithValue("$u", u);
+
+    using var r = cmd.ExecuteReader();
+    if (!r.Read())
+    {
+        return Results.Ok(new { exists = false, username = u });
+    }
+
+    return Results.Ok(new
+    {
+        exists = true,
+        username = u,
+        publicKey = r.GetString(0),
+        encryptedPrivateKey = r.GetString(1),
+        salt = r.GetString(2),
+        nonce = r.GetString(3),
+        kdf = r.GetString(4),
+        iterations = r.GetInt32(5),
+        version = r.GetInt32(6),
+        createdAt = r.GetString(7),
+        updatedAt = r.GetString(8)
     });
-    var response = await http.PostAsync("https://api.openai.com/v1/chat/completions",
-        new StringContent(body, System.Text.Encoding.UTF8, "application/json"));
-    var json = await response.Content.ReadAsStringAsync();
-    if (!response.IsSuccessStatusCode) return Results.Json(new { message = $"OpenAI-fel {(int)response.StatusCode}: {json}" }, statusCode: 502);
-    using var doc = System.Text.Json.JsonDocument.Parse(json);
-    var reply = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString() ?? "";
-    return Results.Ok(new { reply });
 });
-// CHAT (DM) MESSAGING + KEYS
-// ═══════════════════════════════════════════════
+
+app.MapGet("/api/e2ee/account-public-key/{username}", (string username, HttpContext ctx) =>
+{
+    if (ctx.User.Identity?.IsAuthenticated != true) return Results.Unauthorized();
+
+    var t = (username ?? "").Trim().ToLowerInvariant();
+    if (!AppHelpers.IsValidUsername(t) || !AppHelpers.UserExists(t))
+        return Results.NotFound(new { exists = false, message = "User not found" });
+
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
+    cmd.CommandText = @"
+SELECT PublicKey, UpdatedAt
+FROM AccountE2eeKeys
+WHERE Username=$u
+LIMIT 1";
+    cmd.Parameters.AddWithValue("$u", t);
+
+    using var r = cmd.ExecuteReader();
+    if (!r.Read())
+    {
+        return Results.Ok(new { exists = false, username = t, publicKey = "" });
+    }
+
+    return Results.Ok(new
+    {
+        exists = true,
+        username = t,
+        publicKey = r.GetString(0),
+        updatedAt = r.GetString(1)
+    });
+});
+
+app.MapPost("/api/e2ee/account-key", async (HttpContext ctx) =>
+{
+    var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
+
+    System.Text.Json.JsonElement body;
+    try
+    {
+        using var doc = await System.Text.Json.JsonDocument.ParseAsync(ctx.Request.Body);
+        body = doc.RootElement.Clone();
+    }
+    catch
+    {
+        return Results.BadRequest(new { message = "Invalid JSON" });
+    }
+
+    if (body.ValueKind != System.Text.Json.JsonValueKind.Object)
+        return Results.BadRequest(new { message = "Invalid JSON" });
+
+    string ReadString(string name)
+    {
+        if (!body.TryGetProperty(name, out var p)) return "";
+        if (p.ValueKind != System.Text.Json.JsonValueKind.String) return "";
+        return (p.GetString() ?? "").Trim();
+    }
+
+    int ReadInt(string name, int fallback)
+    {
+        if (!body.TryGetProperty(name, out var p)) return fallback;
+        if (p.ValueKind != System.Text.Json.JsonValueKind.Number) return fallback;
+        return p.TryGetInt32(out var n) ? n : fallback;
+    }
+
+    var publicKey = ReadString("publicKey");
+    var encryptedPrivateKey = ReadString("encryptedPrivateKey");
+    var salt = ReadString("salt");
+    var nonce = ReadString("nonce");
+    var kdf = ReadString("kdf");
+    var iterations = ReadInt("iterations", 310000);
+    var version = ReadInt("version", 1);
+
+    var isReset = false;
+    if (body.TryGetProperty("reset", out var resetProp) &&
+        resetProp.ValueKind == System.Text.Json.JsonValueKind.True)
+    {
+        isReset = true;
+    }
+
+    if (string.IsNullOrWhiteSpace(kdf)) kdf = "PBKDF2-SHA256";
+
+    // rs-e2ee-account-key-defensive-v1
+    // Store ciphertext only, but still reject malformed/oversized envelopes before DB.
+    var allowedKdfs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "PBKDF2-SHA256",
+        "ARGON2ID",
+        "SCRYPT"
+    };
+
+    if (publicKey.Length < 64 || publicKey.Length > 8192 || publicKey.Contains('\0'))
+        return Results.BadRequest(new { message = "Invalid publicKey" });
+
+    if (encryptedPrivateKey.Length < 64 || encryptedPrivateKey.Length > 65536 || encryptedPrivateKey.Contains('\0'))
+        return Results.BadRequest(new { message = "Invalid encryptedPrivateKey" });
+
+    if (!DefensiveInput.IsSafeBase64ish(salt, 2048) || salt.Length < 8)
+        return Results.BadRequest(new { message = "Invalid salt" });
+
+    if (!DefensiveInput.IsSafeBase64ish(nonce, 2048) || nonce.Length < 8)
+        return Results.BadRequest(new { message = "Invalid nonce" });
+
+    if (kdf.Length > 64 || kdf.Contains('\0') || !allowedKdfs.Contains(kdf))
+        return Results.BadRequest(new { message = "Invalid kdf" });
+
+    if (iterations < 100000 || iterations > 2000000)
+        return Results.BadRequest(new { message = "Invalid iterations" });
+
+    if (version < 1 || version > 20)
+        return Results.BadRequest(new { message = "Invalid version" });
+
+    var now = DateTime.UtcNow.ToString("o");
+
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
+    cmd.CommandText = @"
+INSERT INTO AccountE2eeKeys
+  (Username, PublicKey, EncryptedPrivateKey, Salt, Nonce, Kdf, Iterations, Version, CreatedAt, UpdatedAt)
+VALUES
+  ($u, $pub, $priv, $salt, $nonce, $kdf, $iter, $ver, $now, $now)
+ON CONFLICT(Username) DO UPDATE SET
+  PublicKey=excluded.PublicKey,
+  EncryptedPrivateKey=excluded.EncryptedPrivateKey,
+  Salt=excluded.Salt,
+  Nonce=excluded.Nonce,
+  Kdf=excluded.Kdf,
+  Iterations=excluded.Iterations,
+  Version=excluded.Version,
+  UpdatedAt=excluded.UpdatedAt";
+    cmd.Parameters.AddWithValue("$u", u);
+    cmd.Parameters.AddWithValue("$pub", publicKey);
+    cmd.Parameters.AddWithValue("$priv", encryptedPrivateKey);
+    cmd.Parameters.AddWithValue("$salt", salt);
+    cmd.Parameters.AddWithValue("$nonce", nonce);
+    cmd.Parameters.AddWithValue("$kdf", kdf);
+    cmd.Parameters.AddWithValue("$iter", iterations);
+    cmd.Parameters.AddWithValue("$ver", version);
+    cmd.Parameters.AddWithValue("$now", now);
+    cmd.ExecuteNonQuery();
+
+    if (isReset)
+    {
+        DbHelpers.EnsureColumn(db, "AuthUsers", "SecurityChangedAt", "TEXT NOT NULL DEFAULT ''");
+
+        using var sec = db.CreateCommand();
+        sec.CommandText = "UPDATE AuthUsers SET SecurityChangedAt=$sc WHERE Username=$u";
+        sec.Parameters.AddWithValue("$sc", now);
+        sec.Parameters.AddWithValue("$u", u);
+        sec.ExecuteNonQuery();
+
+        using var del = db.CreateCommand();
+        del.CommandText = "DELETE FROM UserDeviceKeys WHERE Username=$u";
+        del.Parameters.AddWithValue("$u", u);
+        del.ExecuteNonQuery();
+
+        using var ps = db.CreateCommand();
+        ps.CommandText = "DELETE FROM PersistentSessions WHERE LOWER(Username)=LOWER($u)";
+        ps.Parameters.AddWithValue("$u", u);
+        ps.ExecuteNonQuery();
+
+        try { ctx.RequestServices.GetRequiredService<SessionManager>().InvalidateAllSessions(u); } catch { }
+
+        try { await ctx.SignOutAsync(); } catch { }
+
+        ctx.Response.Cookies.Delete("runspace_auth_v3");
+        ctx.Response.Cookies.Delete("runspace_auth_v2");
+        ctx.Response.Cookies.Delete("runspace_auth");
+        ctx.Response.Cookies.Delete("rs-dt");
+
+        AppHelpers.LogActivity(u, "e2ee_passphrase_reset", $"From {ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown"}");
+
+        return Results.Ok(new { success = true, username = u, updatedAt = now, reset = true, signedOut = true });
+    }
+
+    return Results.Ok(new { success = true, username = u, updatedAt = now });
+});
+
+
 app.MapPost("/api/chat/public-key", async (HttpContext ctx) =>
 {
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
-    var req = await ctx.Request.ReadFromJsonAsync<PublicKeyReq>();
-    if (req == null || string.IsNullOrWhiteSpace(req.PublicKey) || req.PublicKey.Trim().Length > 2048) return Results.BadRequest(new { message = "Ogiltig nyckel." });
-    var did = string.IsNullOrWhiteSpace(req.DeviceId) ? "legacy-default" : InputSanitizer.SanitizeInput(req.DeviceId.Trim(), 100);
-    var dn = string.IsNullOrWhiteSpace(req.DeviceName) ? "Legacy Client" : InputSanitizer.SanitizeInput(req.DeviceName.Trim(), 100);
-    var now = DateTime.UtcNow.ToString("o");
-    using var db = DbHelpers.OpenDb(); using var upsert = db.CreateCommand();
-    upsert.CommandText = @"INSERT INTO UserDeviceKeys (Username,DeviceId,DeviceName,PublicKey,CreatedAt,LastUsedAt) VALUES ($u,$did,$dn,$key,$c,$l) ON CONFLICT(Username,DeviceId) DO UPDATE SET DeviceName=excluded.DeviceName, PublicKey=excluded.PublicKey, LastUsedAt=excluded.LastUsedAt";
-    upsert.Parameters.AddWithValue("$u", u); upsert.Parameters.AddWithValue("$did", did); upsert.Parameters.AddWithValue("$dn", dn);
-    // Normalize PEM or SPKI base64 to DER base64 for Qt compatibility
-    var rawKey = req.PublicKey.Trim();
-    var normalizedKey = rawKey;
-    try
-    {
-        var b64 = rawKey
-            .Replace("-----BEGIN PUBLIC KEY-----", "")
-            .Replace("-----END PUBLIC KEY-----", "")
-            .Replace("\n", "").Replace("\r", "").Replace(" ", "").Trim();
-        var keyBytes = Convert.FromBase64String(b64);
-        using var rsa = System.Security.Cryptography.RSA.Create();
-        int bytesRead;
-        rsa.ImportSubjectPublicKeyInfo(keyBytes, out bytesRead);
-        if (bytesRead > 0)
-            normalizedKey = Convert.ToBase64String(rsa.ExportSubjectPublicKeyInfo());
-    }
-    catch { }
+    if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u))
+        return Results.Unauthorized();
 
-    upsert.Parameters.AddWithValue("$key", normalizedKey); upsert.Parameters.AddWithValue("$c", now); upsert.Parameters.AddWithValue("$l", now);
+    // rs-chat-public-key-defensive-v1
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(u, "chat_public_key", 20, 3600))
+        return Results.Json(new { message = "Rate limit." }, statusCode: 429);
+
+    var req = await ctx.Request.ReadFromJsonAsync<PublicKeyReq>();
+    if (req == null)
+        return Results.BadRequest(new { message = "Invalid request." });
+
+    var did = string.IsNullOrWhiteSpace(req.DeviceId)
+        ? "legacy-default"
+        : DefensiveInput.CleanString(req.DeviceId, 100);
+
+    if (!DefensiveInput.IsSafeDeviceId(did))
+        return Results.BadRequest(new { message = "Invalid device id." });
+
+    var dn = string.IsNullOrWhiteSpace(req.DeviceName)
+        ? "Legacy Client"
+        : DefensiveInput.CleanString(req.DeviceName, 80);
+
+    if (dn.Length == 0)
+        dn = "Legacy Client";
+
+    if (!DefensiveInput.TryNormalizeRsaPublicKey(req.PublicKey, 8192, out var normalizedKey))
+        return Results.BadRequest(new { message = "Invalid public key." });
+
+    var now = DateTime.UtcNow.ToString("o");
+
+    using var db = DbHelpers.OpenDb();
+    using var upsert = db.CreateCommand();
+
+    upsert.CommandText = @"INSERT INTO UserDeviceKeys
+        (Username, DeviceId, DeviceName, PublicKey, CreatedAt, LastUsedAt)
+        VALUES ($u, $did, $dn, $key, $c, $l)
+        ON CONFLICT(Username, DeviceId) DO UPDATE SET
+            DeviceName = excluded.DeviceName,
+            PublicKey = excluded.PublicKey,
+            LastUsedAt = excluded.LastUsedAt";
+
+    upsert.Parameters.AddWithValue("$u", u);
+    upsert.Parameters.AddWithValue("$did", did);
+    upsert.Parameters.AddWithValue("$dn", dn);
+    upsert.Parameters.AddWithValue("$key", normalizedKey);
+    upsert.Parameters.AddWithValue("$c", now);
+    upsert.Parameters.AddWithValue("$l", now);
     upsert.ExecuteNonQuery();
-    using var leg = db.CreateCommand(); leg.CommandText = "UPDATE AuthUsers SET PublicKey=$k WHERE Username=$u"; leg.Parameters.AddWithValue("$k", normalizedKey); leg.Parameters.AddWithValue("$u", u); leg.ExecuteNonQuery();
+
+    using var leg = db.CreateCommand();
+    leg.CommandText = "UPDATE AuthUsers SET PublicKey=$k WHERE Username=$u";
+    leg.Parameters.AddWithValue("$k", normalizedKey);
+    leg.Parameters.AddWithValue("$u", u);
+    leg.ExecuteNonQuery();
+
     return Results.Ok(new { success = true, deviceId = did, deviceName = dn });
 });
 
 app.MapPost("/api/chat/device-key", async (HttpContext ctx) =>
 {
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u))
+        return Results.Unauthorized();
+
+    // rs-chat-device-key-defensive-v1
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(u, "chat_device_key", 30, 3600))
+        return Results.Json(new { message = "Rate limit." }, statusCode: 429);
+
     var req = await ctx.Request.ReadFromJsonAsync<DeviceKeyUpsertReq>();
-    if (req == null || string.IsNullOrWhiteSpace(req.DeviceId) || string.IsNullOrWhiteSpace(req.PublicKey) || req.PublicKey.Trim().Length > 8192) return Results.BadRequest(new { message = "Ogiltigt." });
-    var did = InputSanitizer.SanitizeInput(req.DeviceId.Trim(), 100);
-    var dn = string.IsNullOrWhiteSpace(req.DeviceName) ? "Unnamed" : InputSanitizer.SanitizeInput(req.DeviceName.Trim(), 100);
+    if (req == null)
+        return Results.BadRequest(new { message = "Invalid request." });
+
+    var did = DefensiveInput.CleanString(req.DeviceId, 100);
+    if (!DefensiveInput.IsSafeDeviceId(did))
+        return Results.BadRequest(new { message = "Invalid device id." });
+
+    var dn = string.IsNullOrWhiteSpace(req.DeviceName)
+        ? "Unnamed"
+        : DefensiveInput.CleanString(req.DeviceName, 80);
+
+    if (dn.Length == 0)
+        dn = "Unnamed";
+
+    if (!DefensiveInput.TryNormalizeRsaPublicKey(req.PublicKey, 8192, out var normalizedKey))
+        return Results.BadRequest(new { message = "Invalid public key." });
+
     var now = DateTime.UtcNow.ToString("o");
 
-    // Normalize key to DER SubjectPublicKeyInfo (handles both Web Crypto SPKI and Qt DER)
-    var rawKey = req.PublicKey.Trim();
-    var normalizedKey = rawKey;
-    try
-    {
-        var keyBytes = Convert.FromBase64String(rawKey);
-        using var rsa = System.Security.Cryptography.RSA.Create();
-        int bytesRead;
-        rsa.ImportSubjectPublicKeyInfo(keyBytes, out bytesRead);
-        if (bytesRead > 0)
-            normalizedKey = Convert.ToBase64String(rsa.ExportSubjectPublicKeyInfo());
-    }
-    catch { }
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
 
-    using var db = DbHelpers.OpenDb(); using var cmd = db.CreateCommand();
-    cmd.CommandText = @"INSERT INTO UserDeviceKeys (Username,DeviceId,DeviceName,PublicKey,CreatedAt,LastUsedAt) VALUES ($u,$did,$dn,$key,$c,$l) ON CONFLICT(Username,DeviceId) DO UPDATE SET DeviceName=excluded.DeviceName, PublicKey=excluded.PublicKey, LastUsedAt=excluded.LastUsedAt";
-    cmd.Parameters.AddWithValue("$u", u); cmd.Parameters.AddWithValue("$did", did); cmd.Parameters.AddWithValue("$dn", dn);
-    cmd.Parameters.AddWithValue("$key", normalizedKey); cmd.Parameters.AddWithValue("$c", now); cmd.Parameters.AddWithValue("$l", now);
-    cmd.ExecuteNonQuery(); return Results.Ok(new { success = true, deviceId = did, deviceName = dn });
+    cmd.CommandText = @"INSERT INTO UserDeviceKeys
+        (Username, DeviceId, DeviceName, PublicKey, CreatedAt, LastUsedAt)
+        VALUES ($u, $did, $dn, $key, $c, $l)
+        ON CONFLICT(Username, DeviceId) DO UPDATE SET
+            DeviceName = excluded.DeviceName,
+            PublicKey = excluded.PublicKey,
+            LastUsedAt = excluded.LastUsedAt";
+
+    cmd.Parameters.AddWithValue("$u", u);
+    cmd.Parameters.AddWithValue("$did", did);
+    cmd.Parameters.AddWithValue("$dn", dn);
+    cmd.Parameters.AddWithValue("$key", normalizedKey);
+    cmd.Parameters.AddWithValue("$c", now);
+    cmd.Parameters.AddWithValue("$l", now);
+    cmd.ExecuteNonQuery();
+
+    return Results.Ok(new { success = true, deviceId = did, deviceName = dn });
 });
 
 app.MapGet("/api/chat/device-keys/me", (HttpContext ctx) =>
@@ -1417,24 +2343,56 @@ app.MapGet("/api/chat/device-keys/me", (HttpContext ctx) =>
     return Results.Ok(new { username = u, keys = ChatKeyHelpers.GetUserDeviceKeys(u) });
 });
 
+
 app.MapDelete("/api/chat/device-key/{deviceId}", (string deviceId, HttpContext ctx) =>
 {
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (string.IsNullOrWhiteSpace(u)) return Results.Unauthorized();
-    using var db = DbHelpers.OpenDb(); using var cmd = db.CreateCommand();
+    if (string.IsNullOrWhiteSpace(u))
+        return Results.Unauthorized();
+
+    // rs-chat-device-key-delete-defensive-v1
+    var did = DefensiveInput.CleanString(deviceId, 100);
+    if (!DefensiveInput.IsSafeDeviceId(did))
+        return Results.BadRequest(new { message = "Invalid device id." });
+
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
+
     cmd.CommandText = "DELETE FROM UserDeviceKeys WHERE Username=$u AND DeviceId=$did";
-    cmd.Parameters.AddWithValue("$u", u); cmd.Parameters.AddWithValue("$did", (deviceId ?? "").Trim()); cmd.ExecuteNonQuery();
+    cmd.Parameters.AddWithValue("$u", u);
+    cmd.Parameters.AddWithValue("$did", did);
+    cmd.ExecuteNonQuery();
+
     return Results.Ok(new { success = true });
 });
 
+
 app.MapGet("/api/chat/public-key/{username}", (string username, HttpContext ctx) =>
 {
-    if (ctx.User.Identity?.IsAuthenticated != true) return Results.Unauthorized();
-    var t = (username ?? "").Trim().ToLowerInvariant();
-    if (!AppHelpers.UserExists(t)) return Results.NotFound(new { message = "Ej hittad" });
+    if (ctx.User.Identity?.IsAuthenticated != true)
+        return Results.Unauthorized();
+
+    // rs-chat-public-key-get-defensive-v1
+    var t = DefensiveInput.CleanString(username, 32).ToLowerInvariant();
+
+    if (!DefensiveInput.IsUsername(t) || !AppHelpers.IsValidUsername(t))
+        return Results.BadRequest(new { message = "Invalid username." });
+
+    if (!AppHelpers.UserExists(t))
+        return Results.NotFound(new { message = "Not found." });
+
     using var db = DbHelpers.OpenDb();
-    string legacy = ""; using (var cmd = db.CreateCommand()) { cmd.CommandText = "SELECT PublicKey FROM AuthUsers WHERE Username=$u LIMIT 1"; cmd.Parameters.AddWithValue("$u", t); legacy = cmd.ExecuteScalar() as string ?? ""; }
+
+    string legacy = "";
+    using (var cmd = db.CreateCommand())
+    {
+        cmd.CommandText = "SELECT PublicKey FROM AuthUsers WHERE Username=$u LIMIT 1";
+        cmd.Parameters.AddWithValue("$u", t);
+        legacy = cmd.ExecuteScalar() as string ?? "";
+    }
+
     var keys = ChatKeyHelpers.GetUserDeviceKeys(t);
+
     return Results.Ok(new { username = t, publicKey = legacy, keys });
 });
 
@@ -1443,7 +2401,10 @@ app.MapPost("/api/chat/upload-image", async (HttpContext ctx) =>
     var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
     var _ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "";
-    var _deviceToken = ctx.Request.Headers["X-Device-Token"].FirstOrDefault() ?? "";
+    // rs-chat-upload-device-token-defensive-v1
+    var _deviceToken = DefensiveInput.CleanString(ctx.Request.Headers["X-Device-Token"].FirstOrDefault() ?? "", 256);
+    if (!DefensiveInput.IsSafeToken(_deviceToken))
+        _deviceToken = "";
     // Trust gate — server-side, cannot be bypassed
     string _trustLevel = "medium";
     using (var _db = DbHelpers.OpenDb()) {
@@ -1460,16 +2421,20 @@ app.MapPost("/api/chat/upload-image", async (HttpContext ctx) =>
     if (!ctx.Request.HasFormContentType) return Results.BadRequest(new { error = "form-data" });
     var form = await ctx.Request.ReadFormAsync(); var file = form.Files["image"];
     if (file == null || file.Length == 0) return Results.BadRequest(new { error = "Fil saknas." });
+
+    // rs-safe-filename-chat-upload-image-v1
+    // Never store or echo raw client-provided filenames.
+    var originalName = DefensiveInput.SafeFileName(file.FileName);
     long _maxSize = _trustLevel == "high" ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
     if (file.Length > _maxSize) return Results.Json(new { error = $"Max {_maxSize/1024/1024} MB för din trust-nivå." }, statusCode: 422);
-    var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+    var ext = Path.GetExtension(originalName).ToLowerInvariant();
     if (!new[] { ".png",".jpg",".jpeg",".gif",".webp" }.Contains(ext)) return Results.Json(new { error = "Endast bilder tillåtna (png, jpg, gif, webp)." }, statusCode: 422);
     if (!await FileValidator.IsValidImageAsync(file)) {
         using var _db3 = DbHelpers.OpenDb();
         using var _evc2 = _db3.CreateCommand();
         _evc2.CommandText = @"INSERT INTO SecurityEvents (UserId, EventType, Severity, Detail,  CreatedAt)
             SELECT Id, 'upload_magic_mismatch', 'alert', $d,  datetime('now') FROM AuthUsers WHERE Username=$u";
-        _evc2.Parameters.AddWithValue("$d", $"File={file.FileName} Ext={ext} claimed image");
+        _evc2.Parameters.AddWithValue("$d", $"File={originalName} Ext={ext} claimed image");
         _evc2.Parameters.AddWithValue("$ip", _ip); _evc2.Parameters.AddWithValue("$u", u);
         _evc2.ExecuteNonQuery();
         return Results.Json(new { error = "Filinnehållet matchar inte bildformatet." }, statusCode: 422);
@@ -1482,7 +2447,7 @@ app.MapPost("/api/chat/upload-image", async (HttpContext ctx) =>
         using var _ulc = _db4.CreateCommand();
         _ulc.CommandText = @"INSERT INTO FileUploads (UserId, OriginalName, StoredName, ContentType, FileSizeBytes, Extension, Status,  UploadedAt)
             SELECT Id, $orig, $stored, $ct, $size, $ext, 'ok',  datetime('now') FROM AuthUsers WHERE Username=$u";
-        _ulc.Parameters.AddWithValue("$orig", file.FileName.Length > 255 ? file.FileName[..255] : file.FileName);
+        _ulc.Parameters.AddWithValue("$orig", originalName.Length > 255 ? originalName[..255] : originalName);
         _ulc.Parameters.AddWithValue("$stored", fn); _ulc.Parameters.AddWithValue("$ct", file.ContentType ?? "image");
         _ulc.Parameters.AddWithValue("$size", file.Length); _ulc.Parameters.AddWithValue("$ext", ext);
         _ulc.Parameters.AddWithValue("$ip", _ip); _ulc.Parameters.AddWithValue("$u", u);
@@ -1511,9 +2476,13 @@ app.MapPost("/api/chat/upload-file", async (HttpContext ctx) =>
     if (!ctx.Request.HasFormContentType) return Results.BadRequest(new { error = "form-data" });
     var form = await ctx.Request.ReadFormAsync(); var file = form.Files["file"];
     if (file == null || file.Length == 0) return Results.BadRequest(new { error = "Fil saknas." });
+
+    // rs-safe-filename-chat-upload-file-v1
+    // Never store or echo raw client-provided filenames.
+    var originalName = DefensiveInput.SafeFileName(file.FileName);
     long _maxSize2 = _trustLevel2 == "high" ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
     if (file.Length > _maxSize2) return Results.Json(new { error = $"Max {_maxSize2/1024/1024} MB för din trust-nivå." }, statusCode: 422);
-    var ext2 = Path.GetExtension(file.FileName).ToLowerInvariant();
+    var ext2 = Path.GetExtension(originalName).ToLowerInvariant();
     // Comprehensive block list
     var blocked2 = new HashSet<string> { ".exe",".bat",".cmd",".msi",".scr",".ps1",".psm1",".vbs",".js",".jsx",
         ".ts",".tsx",".mjs",".cjs",".php",".py",".rb",".pl",".jar",".dll",".so",".dylib",
@@ -1526,7 +2495,7 @@ app.MapPost("/api/chat/upload-file", async (HttpContext ctx) =>
         using var _evc2 = _db3.CreateCommand();
         _evc2.CommandText = @"INSERT INTO SecurityEvents (UserId, EventType, Severity, Detail,  CreatedAt)
             SELECT Id, 'upload_blocked_extension', 'alert', $d,  datetime('now') FROM AuthUsers WHERE Username=$u";
-        _evc2.Parameters.AddWithValue("$d", $"Blocked ext={ext2} File={file.FileName}");
+        _evc2.Parameters.AddWithValue("$d", $"Blocked ext={ext2} File={originalName}");
         _evc2.Parameters.AddWithValue("$ip", _ip2); _evc2.Parameters.AddWithValue("$u", u);
         _evc2.ExecuteNonQuery();
         return Results.Json(new { error = $"Filtypen '{ext2}' är inte tillåten." }, statusCode: 422);
@@ -1539,23 +2508,663 @@ app.MapPost("/api/chat/upload-file", async (HttpContext ctx) =>
         using var _ulc = _db4.CreateCommand();
         _ulc.CommandText = @"INSERT INTO FileUploads (UserId, OriginalName, StoredName, ContentType, FileSizeBytes, Extension, Status,  UploadedAt)
             SELECT Id, $orig, $stored, $ct, $size, $ext, 'ok',  datetime('now') FROM AuthUsers WHERE Username=$u";
-        _ulc.Parameters.AddWithValue("$orig", file.FileName.Length > 255 ? file.FileName[..255] : file.FileName);
+        _ulc.Parameters.AddWithValue("$orig", originalName.Length > 255 ? originalName[..255] : originalName);
         _ulc.Parameters.AddWithValue("$stored", fn2); _ulc.Parameters.AddWithValue("$ct", file.ContentType ?? "application/octet-stream");
         _ulc.Parameters.AddWithValue("$size", file.Length); _ulc.Parameters.AddWithValue("$ext", ext2);
         _ulc.Parameters.AddWithValue("$ip", _ip2); _ulc.Parameters.AddWithValue("$u", u);
         _ulc.ExecuteNonQuery();
     }
-    return Results.Ok(new { success = true, fileUrl = $"/uploads/chat/{fn2}", fileName = file.FileName, size = file.Length, ext = ext2 });
+    return Results.Ok(new { success = true, fileUrl = $"/uploads/chat/{fn2}", fileName = originalName, size = file.Length, ext = ext2 });
 }).DisableAntiforgery();
+
+
+// rs-friend-requests-endpoints-v1
+string RsFriendCurrentUser(HttpContext ctx)
+{
+    return (
+        ctx.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
+        ?? ctx.User.Identity?.Name
+        ?? ""
+    ).Trim().ToLowerInvariant();
+}
+
+string RsFriendNormalize(string? value)
+{
+    return (value ?? "").Trim().TrimStart('@').ToLowerInvariant();
+}
+
+bool RsFriendInvalidUsername(string username)
+{
+    if (string.IsNullOrWhiteSpace(username) || username.Length < 2 || username.Length > 32) return true;
+
+    foreach (var ch in username)
+    {
+        if (!(char.IsLetterOrDigit(ch) || ch == '_' || ch == '-' || ch == '.')) return true;
+    }
+
+    return false;
+}
+
+async Task<System.Collections.Generic.Dictionary<string, string>> RsFriendReadBodyAsync(HttpContext ctx)
+{
+    var map = new System.Collections.Generic.Dictionary<string, string>(System.StringComparer.OrdinalIgnoreCase);
+
+    if (ctx.Request.ContentLength == 0) return map;
+
+    try
+    {
+        using var doc = await System.Text.Json.JsonDocument.ParseAsync(ctx.Request.Body);
+        if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return map;
+
+        foreach (var prop in doc.RootElement.EnumerateObject())
+        {
+            map[prop.Name] = prop.Value.ValueKind == System.Text.Json.JsonValueKind.String
+                ? (prop.Value.GetString() ?? "")
+                : prop.Value.ToString();
+        }
+    }
+    catch
+    {
+    }
+
+    return map;
+}
+
+string RsFriendBodyValue(System.Collections.Generic.Dictionary<string, string> body, params string[] names)
+{
+    foreach (var name in names)
+    {
+        if (body.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value))
+            return value;
+    }
+
+    return "";
+}
+
+string? RsFriendFindCanonicalUser(string username)
+{
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
+    cmd.CommandText = "SELECT Username FROM AuthUsers WHERE lower(Username)=lower($u) LIMIT 1";
+    cmd.Parameters.AddWithValue("$u", username);
+    var value = cmd.ExecuteScalar();
+    return value == null ? null : Convert.ToString(value)?.Trim().ToLowerInvariant();
+}
+
+bool RsFriendAreFriends(string a, string b)
+{
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
+    cmd.CommandText = @"
+        SELECT 1
+        FROM Friendships
+        WHERE
+          (lower(UserA)=lower($a) AND lower(UserB)=lower($b))
+          OR
+          (lower(UserA)=lower($b) AND lower(UserB)=lower($a))
+        LIMIT 1";
+    cmd.Parameters.AddWithValue("$a", a);
+    cmd.Parameters.AddWithValue("$b", b);
+    return cmd.ExecuteScalar() != null;
+}
+
+bool RsFriendBlockedEitherWay(string a, string b)
+{
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
+    cmd.CommandText = @"
+        SELECT 1
+        FROM FriendRequests
+        WHERE Status='blocked'
+          AND (
+            (lower(FromUser)=lower($a) AND lower(ToUser)=lower($b))
+            OR
+            (lower(FromUser)=lower($b) AND lower(ToUser)=lower($a))
+          )
+        LIMIT 1";
+    cmd.Parameters.AddWithValue("$a", a);
+    cmd.Parameters.AddWithValue("$b", b);
+    return cmd.ExecuteScalar() != null;
+}
+
+app.MapGet("/api/friends", (HttpContext ctx) =>
+{
+    var me = RsFriendCurrentUser(ctx);
+    if (string.IsNullOrWhiteSpace(me)) return Results.Unauthorized();
+
+    var friends = new List<object>();
+
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
+    cmd.CommandText = @"
+        SELECT
+          CASE WHEN lower(UserA)=lower($me) THEN UserB ELSE UserA END AS Friend,
+          CreatedAt
+        FROM Friendships
+        WHERE lower(UserA)=lower($me) OR lower(UserB)=lower($me)
+        ORDER BY CreatedAt DESC
+        LIMIT 200";
+    cmd.Parameters.AddWithValue("$me", me);
+
+    using var r = cmd.ExecuteReader();
+    while (r.Read())
+    {
+        friends.Add(new
+        {
+            username = r.IsDBNull(0) ? "" : r.GetString(0),
+            createdAt = r.IsDBNull(1) ? "" : r.GetString(1)
+        });
+    }
+
+    return Results.Ok(new { ok = true, friends });
+}).RequireAuthorization();
+
+app.MapGet("/api/friends/requests", (HttpContext ctx) =>
+{
+    var me = RsFriendCurrentUser(ctx);
+    if (string.IsNullOrWhiteSpace(me)) return Results.Unauthorized();
+
+    var incoming = new List<object>();
+    var outgoing = new List<object>();
+
+    using var db = DbHelpers.OpenDb();
+
+    using (var cmd = db.CreateCommand())
+    {
+        cmd.CommandText = @"
+            SELECT Id, FromUser, Message, CreatedAt
+            FROM FriendRequests
+            WHERE lower(ToUser)=lower($me) AND Status='pending'
+            ORDER BY Id DESC
+            LIMIT 100";
+        cmd.Parameters.AddWithValue("$me", me);
+
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            incoming.Add(new
+            {
+                id = r.GetInt64(0),
+                from = r.IsDBNull(1) ? "" : r.GetString(1),
+                message = r.IsDBNull(2) ? "" : r.GetString(2),
+                createdAt = r.IsDBNull(3) ? "" : r.GetString(3)
+            });
+        }
+    }
+
+    using (var cmd = db.CreateCommand())
+    {
+        cmd.CommandText = @"
+            SELECT Id, ToUser, Message, CreatedAt
+            FROM FriendRequests
+            WHERE lower(FromUser)=lower($me) AND Status='pending'
+            ORDER BY Id DESC
+            LIMIT 100";
+        cmd.Parameters.AddWithValue("$me", me);
+
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            outgoing.Add(new
+            {
+                id = r.GetInt64(0),
+                to = r.IsDBNull(1) ? "" : r.GetString(1),
+                message = r.IsDBNull(2) ? "" : r.GetString(2),
+                createdAt = r.IsDBNull(3) ? "" : r.GetString(3)
+            });
+        }
+    }
+
+    return Results.Ok(new { ok = true, incoming, outgoing });
+}).RequireAuthorization();
+
+app.MapPost("/api/friends/request", async (HttpContext ctx) =>
+{
+    var me = RsFriendCurrentUser(ctx);
+    if (string.IsNullOrWhiteSpace(me)) return Results.Unauthorized();
+
+    var body = await RsFriendReadBodyAsync(ctx);
+    var targetRaw = RsFriendBodyValue(body, "username", "to", "target");
+    var target = RsFriendNormalize(targetRaw);
+    var message = RsFriendBodyValue(body, "message", "note");
+
+    if (RsFriendInvalidUsername(target))
+        return Results.BadRequest(new { ok = false, code = "invalid_username", message = "Invalid username." });
+
+    var canonical = RsFriendFindCanonicalUser(target);
+    if (string.IsNullOrWhiteSpace(canonical))
+        return Results.NotFound(new { ok = false, code = "user_not_found", message = "User not found." });
+
+    target = canonical;
+
+    if (target == me)
+        return Results.BadRequest(new { ok = false, code = "cannot_add_self", message = "You cannot add yourself." });
+
+    if (RsFriendBlockedEitherWay(me, target))
+        return Results.Json(new { ok = false, code = "blocked", message = "Friend request cannot be sent." }, statusCode: StatusCodes.Status403Forbidden);
+
+    if (RsFriendAreFriends(me, target))
+        return Results.Ok(new { ok = true, status = "already_friends", username = target });
+
+    using var db = DbHelpers.OpenDb();
+
+    // rs-friend-request-antispam-v1
+    var since10m = DateTime.UtcNow.AddMinutes(-10).ToString("o");
+    var since24h = DateTime.UtcNow.AddHours(-24).ToString("o");
+
+    using (var rate10 = db.CreateCommand())
+    {
+        rate10.CommandText = @"
+            SELECT COUNT(*)
+            FROM FriendRequests
+            WHERE lower(FromUser)=lower($me)
+              AND CreatedAt >= $since";
+        rate10.Parameters.AddWithValue("$me", me);
+        rate10.Parameters.AddWithValue("$since", since10m);
+
+        var count = Convert.ToInt32(rate10.ExecuteScalar() ?? 0);
+        if (count >= 5)
+            return Results.Json(new
+            {
+                ok = false,
+                code = "friend_request_rate_limited",
+                message = "Too many friend requests. Please wait before sending more."
+            }, statusCode: StatusCodes.Status429TooManyRequests);
+    }
+
+    using (var rate24 = db.CreateCommand())
+    {
+        rate24.CommandText = @"
+            SELECT COUNT(*)
+            FROM FriendRequests
+            WHERE lower(FromUser)=lower($me)
+              AND CreatedAt >= $since";
+        rate24.Parameters.AddWithValue("$me", me);
+        rate24.Parameters.AddWithValue("$since", since24h);
+
+        var count = Convert.ToInt32(rate24.ExecuteScalar() ?? 0);
+        if (count >= 30)
+            return Results.Json(new
+            {
+                ok = false,
+                code = "friend_request_daily_limit",
+                message = "Daily friend request limit reached."
+            }, statusCode: StatusCodes.Status429TooManyRequests);
+    }
+
+    using (var pendingOut = db.CreateCommand())
+    {
+        pendingOut.CommandText = @"
+            SELECT COUNT(*)
+            FROM FriendRequests
+            WHERE lower(FromUser)=lower($me)
+              AND Status='pending'";
+        pendingOut.Parameters.AddWithValue("$me", me);
+
+        var count = Convert.ToInt32(pendingOut.ExecuteScalar() ?? 0);
+        if (count >= 50)
+            return Results.Json(new
+            {
+                ok = false,
+                code = "too_many_pending_requests",
+                message = "You have too many pending friend requests."
+            }, statusCode: StatusCodes.Status429TooManyRequests);
+    }
+
+    using (var pendingIn = db.CreateCommand())
+    {
+        pendingIn.CommandText = @"
+            SELECT COUNT(*)
+            FROM FriendRequests
+            WHERE lower(ToUser)=lower($target)
+              AND Status='pending'";
+        pendingIn.Parameters.AddWithValue("$target", target);
+
+        var count = Convert.ToInt32(pendingIn.ExecuteScalar() ?? 0);
+        if (count >= 100)
+            return Results.Json(new
+            {
+                ok = false,
+                code = "target_request_queue_full",
+                message = "This user cannot receive more friend requests right now."
+            }, statusCode: StatusCodes.Status429TooManyRequests);
+    }
+
+    using (var cooldown = db.CreateCommand())
+    {
+        cooldown.CommandText = @"
+            SELECT Status
+            FROM FriendRequests
+            WHERE lower(FromUser)=lower($me)
+              AND lower(ToUser)=lower($target)
+              AND Status IN ('ignored', 'declined')
+              AND UpdatedAt >= $since
+            ORDER BY Id DESC
+            LIMIT 1";
+        cooldown.Parameters.AddWithValue("$me", me);
+        cooldown.Parameters.AddWithValue("$target", target);
+        cooldown.Parameters.AddWithValue("$since", since24h);
+
+        var status = Convert.ToString(cooldown.ExecuteScalar() ?? "");
+        if (!string.IsNullOrWhiteSpace(status))
+            return Results.Json(new
+            {
+                ok = false,
+                code = "friend_request_cooldown",
+                message = "You must wait before sending another request to this user."
+            }, statusCode: StatusCodes.Status429TooManyRequests);
+    }
+
+    using (var incoming = db.CreateCommand())
+    {
+        incoming.CommandText = @"
+            SELECT Id
+            FROM FriendRequests
+            WHERE lower(FromUser)=lower($target)
+              AND lower(ToUser)=lower($me)
+              AND Status='pending'
+            ORDER BY Id DESC
+            LIMIT 1";
+        incoming.Parameters.AddWithValue("$target", target);
+        incoming.Parameters.AddWithValue("$me", me);
+
+        if (incoming.ExecuteScalar() != null)
+            return Results.Json(new { ok = false, code = "incoming_request_exists", message = "This user already sent you a friend request." }, statusCode: StatusCodes.Status409Conflict);
+    }
+
+    using (var outgoing = db.CreateCommand())
+    {
+        outgoing.CommandText = @"
+            SELECT Id
+            FROM FriendRequests
+            WHERE lower(FromUser)=lower($me)
+              AND lower(ToUser)=lower($target)
+              AND Status='pending'
+            ORDER BY Id DESC
+            LIMIT 1";
+        outgoing.Parameters.AddWithValue("$me", me);
+        outgoing.Parameters.AddWithValue("$target", target);
+
+        var existing = outgoing.ExecuteScalar();
+        if (existing != null)
+            return Results.Ok(new { ok = true, status = "pending", requestId = Convert.ToInt64(existing), username = target });
+    }
+
+    var now = DateTime.UtcNow.ToString("o");
+
+    using (var ins = db.CreateCommand())
+    {
+        ins.CommandText = @"
+            INSERT INTO FriendRequests (FromUser, ToUser, Status, Message, CreatedAt, UpdatedAt)
+            VALUES ($from, $to, 'pending', $message, $now, $now);
+            SELECT last_insert_rowid();";
+        ins.Parameters.AddWithValue("$from", me);
+        ins.Parameters.AddWithValue("$to", target);
+        ins.Parameters.AddWithValue("$message", message.Length > 250 ? message.Substring(0, 250) : message);
+        ins.Parameters.AddWithValue("$now", now);
+
+        var id = Convert.ToInt64(ins.ExecuteScalar() ?? 0L);
+        return Results.Ok(new { ok = true, status = "pending", requestId = id, username = target });
+    }
+}).RequireAuthorization();
+
+app.MapPost("/api/friends/accept", async (HttpContext ctx) =>
+{
+    var me = RsFriendCurrentUser(ctx);
+    if (string.IsNullOrWhiteSpace(me)) return Results.Unauthorized();
+
+    var body = await RsFriendReadBodyAsync(ctx);
+    var from = RsFriendNormalize(RsFriendBodyValue(body, "username", "from", "target"));
+
+    if (RsFriendInvalidUsername(from))
+        return Results.BadRequest(new { ok = false, code = "invalid_username", message = "Invalid username." });
+
+    using var db = DbHelpers.OpenDb();
+    using var tx = db.BeginTransaction();
+
+    long requestId = 0;
+    using (var get = db.CreateCommand())
+    {
+        get.Transaction = tx;
+        get.CommandText = @"
+            SELECT Id
+            FROM FriendRequests
+            WHERE lower(FromUser)=lower($from)
+              AND lower(ToUser)=lower($me)
+              AND Status='pending'
+            ORDER BY Id DESC
+            LIMIT 1";
+        get.Parameters.AddWithValue("$from", from);
+        get.Parameters.AddWithValue("$me", me);
+        var raw = get.ExecuteScalar();
+        if (raw == null)
+        {
+            tx.Rollback();
+            return Results.NotFound(new { ok = false, code = "request_not_found", message = "Friend request not found." });
+        }
+        requestId = Convert.ToInt64(raw);
+    }
+
+    var now = DateTime.UtcNow.ToString("o");
+
+    using (var upd = db.CreateCommand())
+    {
+        upd.Transaction = tx;
+        upd.CommandText = "UPDATE FriendRequests SET Status='accepted', UpdatedAt=$now, DecidedAt=$now WHERE Id=$id";
+        upd.Parameters.AddWithValue("$now", now);
+        upd.Parameters.AddWithValue("$id", requestId);
+        upd.ExecuteNonQuery();
+    }
+
+    using (var ins = db.CreateCommand())
+    {
+        ins.Transaction = tx;
+        ins.CommandText = @"
+            INSERT OR IGNORE INTO Friendships (UserA, UserB, CreatedAt, CreatedFromRequestId)
+            VALUES ($a, $b, $now, $rid)";
+        ins.Parameters.AddWithValue("$a", me);
+        ins.Parameters.AddWithValue("$b", from);
+        ins.Parameters.AddWithValue("$now", now);
+        ins.Parameters.AddWithValue("$rid", requestId);
+        ins.ExecuteNonQuery();
+    }
+
+    tx.Commit();
+
+    return Results.Ok(new { ok = true, status = "accepted", username = from });
+}).RequireAuthorization();
+
+app.MapPost("/api/friends/ignore", async (HttpContext ctx) =>
+{
+    var me = RsFriendCurrentUser(ctx);
+    if (string.IsNullOrWhiteSpace(me)) return Results.Unauthorized();
+
+    var body = await RsFriendReadBodyAsync(ctx);
+    var from = RsFriendNormalize(RsFriendBodyValue(body, "username", "from", "target"));
+
+    if (RsFriendInvalidUsername(from))
+        return Results.BadRequest(new { ok = false, code = "invalid_username", message = "Invalid username." });
+
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
+
+    cmd.CommandText = @"
+        UPDATE FriendRequests
+        SET Status='ignored', UpdatedAt=$now, DecidedAt=$now
+        WHERE lower(FromUser)=lower($from)
+          AND lower(ToUser)=lower($me)
+          AND Status='pending'";
+    cmd.Parameters.AddWithValue("$from", from);
+    cmd.Parameters.AddWithValue("$me", me);
+    cmd.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("o"));
+
+    var rows = cmd.ExecuteNonQuery();
+
+    if (rows == 0)
+        return Results.NotFound(new { ok = false, code = "request_not_found", message = "Friend request not found." });
+
+    return Results.Ok(new { ok = true, status = "ignored", username = from });
+}).RequireAuthorization();
+
+app.MapPost("/api/friends/decline", async (HttpContext ctx) =>
+{
+    var me = RsFriendCurrentUser(ctx);
+    if (string.IsNullOrWhiteSpace(me)) return Results.Unauthorized();
+
+    var body = await RsFriendReadBodyAsync(ctx);
+    var from = RsFriendNormalize(RsFriendBodyValue(body, "username", "from", "target"));
+
+    if (RsFriendInvalidUsername(from))
+        return Results.BadRequest(new { ok = false, code = "invalid_username", message = "Invalid username." });
+
+    using var db = DbHelpers.OpenDb();
+    using var cmd = db.CreateCommand();
+
+    cmd.CommandText = @"
+        UPDATE FriendRequests
+        SET Status='declined', UpdatedAt=$now, DecidedAt=$now
+        WHERE lower(FromUser)=lower($from)
+          AND lower(ToUser)=lower($me)
+          AND Status='pending'";
+    cmd.Parameters.AddWithValue("$from", from);
+    cmd.Parameters.AddWithValue("$me", me);
+    cmd.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("o"));
+
+    var rows = cmd.ExecuteNonQuery();
+
+    if (rows == 0)
+        return Results.NotFound(new { ok = false, code = "request_not_found", message = "Friend request not found." });
+
+    return Results.Ok(new { ok = true, status = "declined", username = from });
+}).RequireAuthorization();
+
+app.MapPost("/api/friends/block", async (HttpContext ctx) =>
+{
+    var me = RsFriendCurrentUser(ctx);
+    if (string.IsNullOrWhiteSpace(me)) return Results.Unauthorized();
+
+    var body = await RsFriendReadBodyAsync(ctx);
+    var target = RsFriendNormalize(RsFriendBodyValue(body, "username", "target", "user"));
+
+    if (RsFriendInvalidUsername(target))
+        return Results.BadRequest(new { ok = false, code = "invalid_username", message = "Invalid username." });
+
+    var canonical = RsFriendFindCanonicalUser(target);
+    if (string.IsNullOrWhiteSpace(canonical))
+        return Results.NotFound(new { ok = false, code = "user_not_found", message = "User not found." });
+
+    target = canonical;
+
+    if (target == me)
+        return Results.BadRequest(new { ok = false, code = "cannot_block_self", message = "You cannot block yourself." });
+
+    using var db = DbHelpers.OpenDb();
+    using var tx = db.BeginTransaction();
+
+    var now = DateTime.UtcNow.ToString("o");
+
+    using (var del = db.CreateCommand())
+    {
+        del.Transaction = tx;
+        del.CommandText = @"
+            DELETE FROM Friendships
+            WHERE
+              (lower(UserA)=lower($me) AND lower(UserB)=lower($target))
+              OR
+              (lower(UserA)=lower($target) AND lower(UserB)=lower($me))";
+        del.Parameters.AddWithValue("$me", me);
+        del.Parameters.AddWithValue("$target", target);
+        del.ExecuteNonQuery();
+    }
+
+    using (var upd = db.CreateCommand())
+    {
+        upd.Transaction = tx;
+        upd.CommandText = @"
+            UPDATE FriendRequests
+            SET Status='blocked', UpdatedAt=$now, DecidedAt=$now
+            WHERE
+              (lower(FromUser)=lower($me) AND lower(ToUser)=lower($target))
+              OR
+              (lower(FromUser)=lower($target) AND lower(ToUser)=lower($me))";
+        upd.Parameters.AddWithValue("$me", me);
+        upd.Parameters.AddWithValue("$target", target);
+        upd.Parameters.AddWithValue("$now", now);
+
+        var rows = upd.ExecuteNonQuery();
+
+        if (rows == 0)
+        {
+            using var ins = db.CreateCommand();
+            ins.Transaction = tx;
+            ins.CommandText = @"
+                INSERT INTO FriendRequests (FromUser, ToUser, Status, Message, CreatedAt, UpdatedAt, DecidedAt)
+                VALUES ($from, $to, 'blocked', '', $now, $now, $now)";
+            ins.Parameters.AddWithValue("$from", me);
+            ins.Parameters.AddWithValue("$to", target);
+            ins.Parameters.AddWithValue("$now", now);
+            ins.ExecuteNonQuery();
+        }
+    }
+
+    tx.Commit();
+
+    return Results.Ok(new { ok = true, status = "blocked", username = target });
+}).RequireAuthorization();
+
 
 app.MapPost("/api/chat/send", async (HttpContext ctx, IHubContext<ChatHub> hub) =>
 {
     var from = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(from) || !AppHelpers.UserExists(from)) return Results.Unauthorized();
+    string _apiTrustLevel = "medium";
+    using (var _apiTrustDb = DbHelpers.OpenDb()) {
+        using var _apiTrustCmd = _apiTrustDb.CreateCommand();
+        _apiTrustCmd.CommandText = "SELECT TrustLevel, IsSuspended FROM AuthUsers WHERE Username=$u LIMIT 1";
+        _apiTrustCmd.Parameters.AddWithValue("$u", from);
+        using var _apiTrustReader = _apiTrustCmd.ExecuteReader();
+        if (_apiTrustReader.Read()) {
+            var _apiSuspended = !_apiTrustReader.IsDBNull(1) && _apiTrustReader.GetInt32(1) == 1;
+            _apiTrustLevel = _apiSuspended ? "blocked" : (_apiTrustReader.IsDBNull(0) ? "medium" : _apiTrustReader.GetString(0));
+        }
+    }
+
+    if (_apiTrustLevel == "blocked")
+        return Results.Json(new { message = "Din session är blockerad." }, statusCode: 403);
+
+    int _apiRateLimit = _apiTrustLevel == "high" ? 60 : _apiTrustLevel == "medium" ? 30 : 15;
+
     var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
-    if (!limiter.IsAllowed(from, "chat_send", 60, 60)) return Results.Json(new { message = "För snabbt." }, statusCode: 429);
+    if (!limiter.IsAllowed(from, "chat_send", _apiRateLimit, 60)) {
+        if (_apiTrustLevel == "low") {
+            using var _apiPenaltyDb = DbHelpers.OpenDb();
+            TrustEventService.OnRateLimit(_apiPenaltyDb, from);
+        }
+        return Results.Json(new { message = "För snabbt.", limit = _apiRateLimit, trustLevel = _apiTrustLevel }, statusCode: 429);
+    }
     var req = await ctx.Request.ReadFromJsonAsync<ChatMessageReq>();
     if (req == null) return Results.BadRequest(new { message = "Body saknas" });
+
+    // rs-chat-send-validation-v1
+    // Defensive field validation before deeper chat validation/storage.
+    if (!DefensiveInput.IsUsername(req.To))
+        return Results.BadRequest(new { message = "Ogiltig mottagare." });
+
+    var algorithm = (req.Algorithm ?? "plain").Trim().ToLowerInvariant();
+    if (!new[] { "plain", "e2ee", "aes-gcm", "rsa-oaep-aes-gcm" }.Contains(algorithm))
+        return Results.BadRequest(new { message = "Ogiltig krypteringsalgoritm." });
+
+    if (req.ReplyToId.HasValue && req.ReplyToId.Value < 0)
+        return Results.BadRequest(new { message = "Ogiltigt svar-id." });
+
+    if (!DefensiveInput.IsSafeChatText(req.Text, req.Encrypted == 1 ? 65536 : 4000))
+        return Results.BadRequest(new { message = "Ogiltigt meddelande." });
+
+    if (!DefensiveInput.IsSafeBase64ish(req.Iv, 4096) ||
+        !DefensiveInput.IsSafeBase64ish(req.EncryptedKey, 65536) ||
+        !DefensiveInput.IsSafeBase64ish(req.SenderEncryptedKey, 65536))
+        return Results.BadRequest(new { message = "Ogiltig krypteringsmetadata." });
+
     var v = ChatHelpers.ValidateOutgoingMessage(req, from);
     if (!v.Ok) return Results.Json(new { message = v.Message }, statusCode: v.StatusCode);
     var ts = DateTime.UtcNow.ToString("o");
@@ -1566,7 +3175,26 @@ app.MapPost("/api/chat/send", async (HttpContext ctx, IHubContext<ChatHub> hub) 
     cmd.Parameters.AddWithValue("$ek", v.EncryptedKey); cmd.Parameters.AddWithValue("$sek", v.SenderEncryptedKey);
     cmd.Parameters.AddWithValue("$rk", v.RecipientKeysJson); cmd.Parameters.AddWithValue("$sk", v.SenderKeysJson);
     cmd.Parameters.AddWithValue("$rid", req.ReplyToId ?? 0);
-    id = (long)(cmd.ExecuteScalar() ?? 0L); }
+    try
+    {
+        id = (long)(cmd.ExecuteScalar() ?? 0L);
+    }
+    catch (Exception ex) when (
+        ex.Message.Contains("new_direct_messages_require_friend_request", StringComparison.OrdinalIgnoreCase)
+        || ex.Message.Contains("direct_messages_blocked", StringComparison.OrdinalIgnoreCase)
+    )
+    {
+        var blocked = ex.Message.Contains("direct_messages_blocked", StringComparison.OrdinalIgnoreCase);
+
+        return Results.Json(new
+        {
+            ok = false,
+            code = blocked ? "user_blocked" : "friend_request_required",
+            message = blocked
+                ? "You cannot message this user."
+                : "Direct messages require an accepted friend request."
+        }, statusCode: StatusCodes.Status403Forbidden);
+    } }
     var payload = ChatHelpers.BuildPayload(id, from, v.ToUser, v.CipherText, ts, v.Encrypted, v.Iv, v.Algorithm, v.EncryptedKey, v.SenderEncryptedKey, v.RecipientKeysJson, v.SenderKeysJson, req.ReplyToId ?? 0);
     await hub.Clients.User(v.ToUser).SendAsync("ReceiveMessage", payload);
     await hub.Clients.User(from).SendAsync("ReceiveMessage", payload);
@@ -1613,6 +3241,9 @@ app.MapGet("/api/chat/conversations", (HttpContext ctx) =>
 
 app.MapPost("/api/chat/execute", async (HttpContext ctx, IHubContext<ChatHub> hub) =>
 {
+    if (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Production")
+        return Results.NotFound();
+
     var me = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(me) || !AppHelpers.UserExists(me)) return Results.Unauthorized();
 
@@ -1689,7 +3320,7 @@ app.MapPost("/api/chat/execute", async (HttpContext ctx, IHubContext<ChatHub> hu
             stderr = $"Timeout: processen avbröts efter {timeoutSecs}s.";
             exitCode = 124;
         } catch (Exception ex) {
-            stderr = "Internt fel: " + ex.Message;
+            stderr = "Internt fel.";
             exitCode = 1;
         }
         sw.Stop();
@@ -2142,7 +3773,10 @@ app.MapPost("/api/news/image", async (HttpContext ctx) =>
     var form = await ctx.Request.ReadFormAsync(); var file = form.Files["image"];
     if (file == null || file.Length == 0 || file.Length > 8 * 1024 * 1024)
         return Results.BadRequest(new { error = "Fil saknas eller för stor (max 8MB)." });
-    var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+
+    // rs-upload-filename-defensive-v2-news
+    var originalName = DefensiveInput.SafeFileName(file.FileName);
+    var ext = Path.GetExtension(originalName).ToLowerInvariant();
     if (!new[] { ".png",".jpg",".jpeg",".gif",".webp" }.Contains(ext))
         return Results.BadRequest(new { error = "Ogiltigt format" });
     if (!await FileValidator.IsValidImageAsync(file))
@@ -2161,48 +3795,67 @@ app.MapPost("/api/news/image", async (HttpContext ctx) =>
 // ═══════════════════════════════════════════════
 
 // New device creates a link request with a 6-digit code
+
 app.MapPost("/api/chat/link-request", async (HttpContext ctx) =>
 {
     var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (string.IsNullOrWhiteSpace(username)) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(username))
+        return Results.Unauthorized();
+
+    // rs-link-request-defensive-v1
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(username, "chat_link_request", 10, 900))
+        return Results.Json(new { message = "Rate limit." }, statusCode: 429);
 
     var req = await ctx.Request.ReadFromJsonAsync<LinkRequestReq>();
     if (req == null || string.IsNullOrWhiteSpace(req.DeviceId))
-        return Results.BadRequest(new { message = "DeviceId required" });
+        return Results.BadRequest(new { message = "DeviceId required." });
 
-    // Generate 6-digit code
+    var did = DefensiveInput.CleanString(req.DeviceId, 100);
+    if (!DefensiveInput.IsSafeDeviceId(did))
+        return Results.BadRequest(new { message = "Invalid device id." });
+
+    var deviceName = string.IsNullOrWhiteSpace(req.DeviceName)
+        ? "Unknown"
+        : DefensiveInput.CleanString(req.DeviceName, 80);
+
+    if (deviceName.Length == 0)
+        deviceName = "Unknown";
+
     var code = RandomNumberGenerator.GetInt32(100000, 999999).ToString();
     var now = DateTime.UtcNow;
     var expires = now.AddMinutes(5);
 
     using var db = DbHelpers.OpenDb();
 
-    // Clean up expired requests
     using (var del = db.CreateCommand())
     {
         del.CommandText = "DELETE FROM KeyLinkRequests WHERE ExpiresAt < $now OR (Username = $u AND RequestingDeviceId = $did)";
         del.Parameters.AddWithValue("$now", now.ToString("o"));
         del.Parameters.AddWithValue("$u", username);
-        del.Parameters.AddWithValue("$did", req.DeviceId.Trim());
+        del.Parameters.AddWithValue("$did", did);
         del.ExecuteNonQuery();
     }
 
     using var cmd = db.CreateCommand();
-    cmd.CommandText = @"INSERT INTO KeyLinkRequests (Username,RequestingDeviceId,RequestingDeviceName,LinkCode,Status,CreatedAt,ExpiresAt)
-        VALUES ($u,$did,$dn,$code,'pending',$c,$e)";
+    cmd.CommandText = @"INSERT INTO KeyLinkRequests
+        (Username, RequestingDeviceId, RequestingDeviceName, LinkCode, Status, CreatedAt, ExpiresAt)
+        VALUES ($u, $did, $dn, $code, 'pending', $c, $e)";
+
     cmd.Parameters.AddWithValue("$u", username);
-    cmd.Parameters.AddWithValue("$did", req.DeviceId.Trim());
-    cmd.Parameters.AddWithValue("$dn", InputSanitizer.SanitizeInput(req.DeviceName ?? "Unknown", 100));
+    cmd.Parameters.AddWithValue("$did", did);
+    cmd.Parameters.AddWithValue("$dn", deviceName);
     cmd.Parameters.AddWithValue("$code", code);
     cmd.Parameters.AddWithValue("$c", now.ToString("o"));
     cmd.Parameters.AddWithValue("$e", expires.ToString("o"));
     cmd.ExecuteNonQuery();
 
-    AppHelpers.LogActivity(username, "link_request", $"device={req.DeviceId}");
+    var didPreview = did.Length > 12 ? did.Substring(0, 12) + "..." : did;
+    AppHelpers.LogActivity(username, "link_request", "device=" + didPreview);
+
     return Results.Ok(new { code, expiresAt = expires.ToString("o") });
 });
 
-// Existing device lists pending link requests for this user
 app.MapGet("/api/chat/link-requests", (HttpContext ctx) =>
 {
     var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
@@ -2244,9 +3897,23 @@ app.MapPost("/api/chat/link-approve", async (HttpContext ctx) =>
     var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(username)) return Results.Unauthorized();
 
+    // rs-link-approve-defensive-v1
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(username, "chat_link_approve", 20, 900))
+        return Results.Json(new { message = "Rate limit." }, statusCode: 429);
+
     var req = await ctx.Request.ReadFromJsonAsync<LinkApproveReq>();
     if (req == null || string.IsNullOrWhiteSpace(req.Code) || string.IsNullOrWhiteSpace(req.EncryptedPrivateKey))
         return Results.BadRequest(new { message = "Code and EncryptedPrivateKey required" });
+
+    var code = DefensiveInput.CleanString(req.Code, 8);
+    if (!DefensiveInput.IsOtpCode(code))
+        return Results.BadRequest(new { message = "Invalid code." });
+
+    if (!DefensiveInput.IsSafeBase64ish(req.EncryptedPrivateKey, 65536))
+        return Results.BadRequest(new { message = "Invalid encrypted private key." });
+
+    var encryptedPrivateKey = req.EncryptedPrivateKey.Trim();
 
     using var db = DbHelpers.OpenDb();
 
@@ -2254,7 +3921,7 @@ app.MapPost("/api/chat/link-approve", async (HttpContext ctx) =>
     using var find = db.CreateCommand();
     find.CommandText = "SELECT Id,RequestingDeviceId FROM KeyLinkRequests WHERE Username=$u AND LinkCode=$code AND Status='pending' AND ExpiresAt > $now LIMIT 1";
     find.Parameters.AddWithValue("$u", username);
-    find.Parameters.AddWithValue("$code", req.Code.Trim());
+    find.Parameters.AddWithValue("$code", code);
     find.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("o"));
     using var r = find.ExecuteReader();
 
@@ -2268,41 +3935,54 @@ app.MapPost("/api/chat/link-approve", async (HttpContext ctx) =>
     // Update the request with the encrypted private key
     using var upd = db.CreateCommand();
     upd.CommandText = "UPDATE KeyLinkRequests SET EncryptedPrivateKey=$epk, Status='approved' WHERE Id=$id";
-    upd.Parameters.AddWithValue("$epk", req.EncryptedPrivateKey.Trim());
+    upd.Parameters.AddWithValue("$epk", encryptedPrivateKey);
     upd.Parameters.AddWithValue("$id", requestId);
     upd.ExecuteNonQuery();
 
-    AppHelpers.LogActivity(username, "link_approve", $"device={deviceId}");
+    var did = DefensiveInput.CleanString(deviceId, 100);
+    var didPreview = did.Length > 12 ? did.Substring(0, 12) + "..." : did;
+    AppHelpers.LogActivity(username, "link_approve", "device=" + didPreview);
     return Results.Ok(new { success = true, deviceId });
 });
 
 // New device polls for approved link (gets the encrypted private key)
+
 app.MapGet("/api/chat/link-status/{code}", (string code, HttpContext ctx) =>
 {
     var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (string.IsNullOrWhiteSpace(username)) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(username))
+        return Results.Unauthorized();
+
+    // rs-link-status-defensive-v1
+    var safeCode = DefensiveInput.CleanString(code, 8);
+    if (!DefensiveInput.IsOtpCode(safeCode))
+        return Results.BadRequest(new { message = "Invalid code." });
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(username, "chat_link_status", 60, 300))
+        return Results.Json(new { message = "Rate limit." }, statusCode: 429);
 
     using var db = DbHelpers.OpenDb();
     using var cmd = db.CreateCommand();
+
     cmd.CommandText = "SELECT Status,EncryptedPrivateKey FROM KeyLinkRequests WHERE Username=$u AND LinkCode=$code LIMIT 1";
     cmd.Parameters.AddWithValue("$u", username);
-    cmd.Parameters.AddWithValue("$code", code.Trim());
+    cmd.Parameters.AddWithValue("$code", safeCode);
+
     using var r = cmd.ExecuteReader();
-
     if (!r.Read())
-        return Results.NotFound(new { message = "Not found" });
+        return Results.Ok(new { status = "pending", encryptedPrivateKey = "" });
 
-    var status = r.GetString(0);
+    var status = r.IsDBNull(0) ? "pending" : r.GetString(0);
     var epk = r.IsDBNull(1) ? "" : r.GetString(1);
+    r.Close();
 
     if (status == "approved" && !string.IsNullOrWhiteSpace(epk))
     {
-        r.Close();
-        // Clean up after retrieval
         using var del = db.CreateCommand();
         del.CommandText = "DELETE FROM KeyLinkRequests WHERE Username=$u AND LinkCode=$code";
         del.Parameters.AddWithValue("$u", username);
-        del.Parameters.AddWithValue("$code", code.Trim());
+        del.Parameters.AddWithValue("$code", safeCode);
         del.ExecuteNonQuery();
 
         return Results.Ok(new { status = "approved", encryptedPrivateKey = epk });
@@ -2311,8 +3991,6 @@ app.MapGet("/api/chat/link-status/{code}", (string code, HttpContext ctx) =>
     return Results.Ok(new { status, encryptedPrivateKey = "" });
 });
 
-
-// ── Change member role ──
 app.MapPost("/api/groups/{groupId}/members/{target}/role", async (string groupId, string target, HttpContext ctx) =>
 {
     var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
@@ -2512,36 +4190,59 @@ app.MapPost("/api/groups/{groupId}/roles/reorder", async (string groupId, HttpCo
 // KEY-BASED AUTH ENDPOINTS
 // ═══════════════════════════════════════════════
 
+
 app.MapPost("/api/auth/register-email", async (HttpContext ctx) =>
 {
     var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
     var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
     if (!limiter.IsAllowed(ip, "register_email", 5, 3600))
         return Results.Json(new { message = "Too many attempts." }, statusCode: 429);
+
+    // rs-register-email-defensive-v1
     var req = await ctx.Request.ReadFromJsonAsync<RegisterEmailReq>();
-    if (req == null || string.IsNullOrWhiteSpace(req.Email) || !req.Email.Contains("@"))
+    if (req == null || string.IsNullOrWhiteSpace(req.Email))
         return Results.BadRequest(new { status = "error", message = "Valid email required." });
-    var email = req.Email.Trim().ToLowerInvariant();
+
+    var email = DefensiveInput.CleanString(req.Email, 254).ToLowerInvariant();
+    if (!DefensiveInput.IsEmail(email))
+        return Results.BadRequest(new { status = "error", message = "Valid email required." });
+
+    if (!limiter.IsAllowed(email, "register_email_addr", 3, 3600))
+        return Results.Json(new { message = "Too many attempts." }, statusCode: 429);
+
     var code = OtpGenerator.GenerateCode();
     var cacheKey = $"reg_email_otp:{email}";
     OtpCache.Set(cacheKey, code, TimeSpan.FromMinutes(15));
+
     try { await SmtpMailService.SendOtpAsync(email, email.Split('@')[0], code, "verify"); }
-    catch (Exception ex) { Console.WriteLine("[SMTP] " + ex.Message); }
+    catch { Console.WriteLine("[SMTP] Send failed"); }
+
     return Results.Ok(new { status = "otp_required", pendingToken = email, message = "Code sent." });
 });
+
 
 app.MapPost("/api/auth/verify-email-otp", async (HttpContext ctx) =>
 {
     var req = await ctx.Request.ReadFromJsonAsync<VerifyOtpReq>();
     if (req == null || string.IsNullOrWhiteSpace(req.PendingToken) || string.IsNullOrWhiteSpace(req.Code))
         return Results.BadRequest(new { status = "error", message = "Invalid request." });
-    var email = req.PendingToken.Trim().ToLowerInvariant();
+
+    // rs-verify-email-otp-defensive-v1
+    var email = DefensiveInput.CleanString(req.PendingToken, 254).ToLowerInvariant();
+    var code = DefensiveInput.CleanString(req.Code, 8);
+
+    if (!DefensiveInput.IsEmail(email) || !DefensiveInput.IsOtpCode(code))
+        return Results.BadRequest(new { status = "error", message = "Invalid request." });
+
     var cacheKey = $"reg_email_otp:{email}";
-    if (!OtpCache.TryGet(cacheKey, out var stored) || stored != req.Code.Trim())
+    if (!OtpCache.TryGet(cacheKey, out var stored) || stored != code)
         return Results.Json(new { status = "error", message = "Invalid or expired code." }, statusCode: 400);
+
     OtpCache.Remove(cacheKey);
+
     // Store verified email in cache so register-with-key can use it
     OtpCache.Set($"verified_email:{email}", email, TimeSpan.FromMinutes(30));
+
     return Results.Ok(new { status = "ok", message = "Email verified." });
 });
 
@@ -2556,20 +4257,23 @@ app.MapPost("/api/auth/register-with-key", async (HttpContext ctx) =>
     if (req == null || string.IsNullOrWhiteSpace(req.Username) || string.IsNullOrWhiteSpace(req.AccountKey))
         return Results.BadRequest(new { status = "error", message = "Username and account key required." });
     var username = req.Username.Trim().ToLowerInvariant();
-    var accountKey = req.AccountKey.Trim();
+    var accountKey = AccountKeyHashing.Normalize(req.AccountKey);
+    var accountKeyHash = AccountKeyHashing.Hash(accountKey);
     if (!AppHelpers.IsValidUsername(username))
         return Results.BadRequest(new { status = "error", message = "Invalid username." });
     if (ReservedNames.IsReserved(username))
         return Results.BadRequest(new { status = "error", message = "Username reserved." });
     if (ContentFilter.IsOffensive(username))
         return Results.BadRequest(new { status = "error", message = "Username not allowed." });
-    // Validate UUID v4 format
-    if (!System.Text.RegularExpressions.Regex.IsMatch(accountKey, @"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+    // rs-key-auth-defensive-v1
+    // Validate UUID v4 format before touching storage.
+    if (!DefensiveInput.IsUuidV4(accountKey))
         return Results.BadRequest(new { status = "error", message = "Invalid account key format." });
     // Check if key already in use
     using var db = DbHelpers.OpenDb();
     using var keyCheck = db.CreateCommand();
-    keyCheck.CommandText = "SELECT COUNT(*) FROM AuthUsers WHERE AccountKey=$k";
+    keyCheck.CommandText = "SELECT COUNT(*) FROM AuthUsers WHERE AccountKeyHash=$kh OR AccountKey=$k";
+    keyCheck.Parameters.AddWithValue("$kh", accountKeyHash);
     keyCheck.Parameters.AddWithValue("$k", accountKey);
     if (Convert.ToInt32(keyCheck.ExecuteScalar()) > 0)
         return Results.Json(new { status = "error", message = "Account key already in use." }, statusCode: 409);
@@ -2595,14 +4299,15 @@ app.MapPost("/api/auth/register-with-key", async (HttpContext ctx) =>
     // Insert user with empty password hash — key is the auth method
     using var ins = db.CreateCommand();
     ins.CommandText = @"INSERT INTO AuthUsers
-        (Username, PasswordHash, CreatedAt, Status, Badges, Email, EmailVerified, AccountKey, PublicId)
-        VALUES ($u, '', $t, $status, '[]', $e, $ev, $key, lower(hex(randomblob(16))))";
+        (Username, PasswordHash, CreatedAt, Status, Badges, Email, EmailVerified, AccountKey, AccountKeyHash, PublicId)
+        VALUES ($u, '', $t, $status, '[]', $e, $ev, $key, $keyHash, lower(hex(randomblob(16))))";
     ins.Parameters.AddWithValue("$u", username);
     ins.Parameters.AddWithValue("$t", now);
     ins.Parameters.AddWithValue("$status", emailVerified ? "verified" : "pending");
     ins.Parameters.AddWithValue("$e", email);
     ins.Parameters.AddWithValue("$ev", emailVerified ? 1 : 0);
     ins.Parameters.AddWithValue("$key", accountKey);
+    ins.Parameters.AddWithValue("$keyHash", accountKeyHash);
     ins.ExecuteNonQuery();
     AppHelpers.LogActivity(username, "register_with_key", $"From {ip} emailVerified={emailVerified}");
     // Sign in immediately
@@ -2611,11 +4316,12 @@ app.MapPost("/api/auth/register-with-key", async (HttpContext ctx) =>
     var principal = new System.Security.Claims.ClaimsPrincipal(identity);
     await ctx.SignInAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme, principal,
         new Microsoft.AspNetCore.Authentication.AuthenticationProperties { IsPersistent = true, ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30) });
-    var deviceToken = ctx.Request.Headers["X-Device-Token"].FirstOrDefault() ?? "";
-    if (!string.IsNullOrWhiteSpace(deviceToken))
+    // rs-key-auth-device-token-cookie-defensive-v1
+    var deviceToken = DefensiveInput.CleanString(ctx.Request.Headers["X-Device-Token"].FirstOrDefault() ?? "", 256);
+    if (DefensiveInput.IsSafeToken(deviceToken))
     {
         ctx.Response.Cookies.Append("rs-dt", deviceToken, new CookieOptions {
-            HttpOnly = true, Secure = false, SameSite = SameSiteMode.Lax,
+            HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax,
             Path = "/", MaxAge = TimeSpan.FromDays(30)
         });
     }
@@ -2630,11 +4336,18 @@ app.MapPost("/api/auth/login-with-key", async (HttpContext ctx) =>
     var req = await ctx.Request.ReadFromJsonAsync<LoginWithKeyReq>();
     if (req == null || string.IsNullOrWhiteSpace(req.AccountKey))
         return Results.BadRequest(new { status = "error", message = "Account key required." });
-    var accountKey = req.AccountKey.Trim();
+    var accountKey = AccountKeyHashing.Normalize(req.AccountKey);
+    var accountKeyHash = AccountKeyHashing.Hash(accountKey);
+
+    // rs-login-key-defensive-v1
+    // Reject malformed keys before DB lookup.
+    if (!DefensiveInput.IsUuidV4(accountKey))
+        return Results.BadRequest(new { status = "error", message = "Invalid account key format." });
+
     using var db = DbHelpers.OpenDb();
     using var cmd = db.CreateCommand();
-    cmd.CommandText = "SELECT Username, Status, AccountLockedUntil, IsSuspended FROM AuthUsers WHERE AccountKey=$k LIMIT 1";
-    cmd.Parameters.AddWithValue("$k", accountKey);
+    cmd.CommandText = "SELECT Username, Status, AccountLockedUntil, IsSuspended FROM AuthUsers WHERE AccountKeyHash=$kh LIMIT 1";
+    cmd.Parameters.AddWithValue("$kh", accountKeyHash);
     using var r = cmd.ExecuteReader();
     if (!r.Read())
     {
@@ -2657,16 +4370,126 @@ app.MapPost("/api/auth/login-with-key", async (HttpContext ctx) =>
     var principal = new System.Security.Claims.ClaimsPrincipal(identity);
     await ctx.SignInAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme, principal,
         new Microsoft.AspNetCore.Authentication.AuthenticationProperties { IsPersistent = true, ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30) });
-    var deviceToken = ctx.Request.Headers["X-Device-Token"].FirstOrDefault() ?? "";
-    if (!string.IsNullOrWhiteSpace(deviceToken))
+    // rs-key-auth-device-token-cookie-defensive-v1
+    var deviceToken = DefensiveInput.CleanString(ctx.Request.Headers["X-Device-Token"].FirstOrDefault() ?? "", 256);
+    if (DefensiveInput.IsSafeToken(deviceToken))
     {
         ctx.Response.Cookies.Append("rs-dt", deviceToken, new CookieOptions {
-            HttpOnly = true, Secure = false, SameSite = SameSiteMode.Lax,
+            HttpOnly = true, Secure = true, SameSite = SameSiteMode.Lax,
             Path = "/", MaxAge = TimeSpan.FromDays(30)
         });
     }
     AppHelpers.LogActivity(username, "login_with_key", $"From {ip}");
     return Results.Ok(new { status = "ok", redirect = "/app", username, isAdmin = AppHelpers.IsAdmin(username) });
+});
+
+
+
+app.MapPost("/api/auth/rotate-account-key", async (HttpContext ctx) =>
+{
+    var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
+
+    if (string.IsNullOrWhiteSpace(username))
+        return Results.Json(new { status = "error", message = "Not signed in." }, statusCode: 401);
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    if (!limiter.IsAllowed(ip + ":" + username, "rotate_account_key", 5, 3600))
+        return Results.Json(new { status = "error", message = "Too many key changes. Try again later." }, statusCode: 429);
+
+    System.Text.Json.JsonElement body;
+
+    try
+    {
+        body = await ctx.Request.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+    }
+    catch
+    {
+        return Results.BadRequest(new { status = "error", message = "Invalid request body." });
+    }
+
+    string accountKey = "";
+
+    if (body.ValueKind == System.Text.Json.JsonValueKind.Object)
+    {
+        if (body.TryGetProperty("accountKey", out var k1))
+            accountKey = k1.GetString() ?? "";
+
+        if (string.IsNullOrWhiteSpace(accountKey) && body.TryGetProperty("AccountKey", out var k2))
+            accountKey = k2.GetString() ?? "";
+    }
+
+    accountKey = AccountKeyHashing.Normalize(accountKey);
+    var accountKeyHash = AccountKeyHashing.Hash(accountKey);
+
+    if (string.IsNullOrWhiteSpace(accountKey))
+        return Results.BadRequest(new { status = "error", message = "Account key required." });
+
+    if (!System.Text.RegularExpressions.Regex.IsMatch(
+        accountKey,
+        @"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+    {
+        return Results.BadRequest(new { status = "error", message = "Invalid account key format." });
+    }
+
+    using var db = DbHelpers.OpenDb();
+
+    using var exists = db.CreateCommand();
+    exists.CommandText = @"
+        SELECT COUNT(*)
+        FROM AuthUsers
+        WHERE (AccountKeyHash=$kh OR AccountKey=$k)
+          AND LOWER(Username) <> LOWER($u)";
+    exists.Parameters.AddWithValue("$kh", accountKeyHash);
+    exists.Parameters.AddWithValue("$k", accountKey);
+    exists.Parameters.AddWithValue("$u", username);
+
+    if (Convert.ToInt32(exists.ExecuteScalar()) > 0)
+        return Results.Json(new { status = "error", message = "Account key already in use." }, statusCode: 409);
+
+    DbHelpers.EnsureColumn(db, "AuthUsers", "SecurityChangedAt", "TEXT NOT NULL DEFAULT ''");
+
+    using var upd = db.CreateCommand();
+    upd.CommandText = @"
+        UPDATE AuthUsers
+        SET AccountKey=$k, AccountKeyHash=$kh, SecurityChangedAt=$sc
+        WHERE LOWER(Username)=LOWER($u)";
+    upd.Parameters.AddWithValue("$k", accountKey);
+    upd.Parameters.AddWithValue("$kh", accountKeyHash);
+    upd.Parameters.AddWithValue("$sc", DateTime.UtcNow.ToString("o"));
+    upd.Parameters.AddWithValue("$u", username);
+
+    var changed = upd.ExecuteNonQuery();
+
+    if (changed <= 0)
+        return Results.Json(new { status = "error", message = "Account not found." }, statusCode: 404);
+
+    // rs-rotate-account-key-kill-sessions-v1
+    using (var delSessions = db.CreateCommand())
+    {
+        delSessions.CommandText = "DELETE FROM PersistentSessions WHERE LOWER(Username)=LOWER($u)";
+        delSessions.Parameters.AddWithValue("$u", username);
+        delSessions.ExecuteNonQuery();
+    }
+
+    ctx.RequestServices.GetRequiredService<SessionManager>().InvalidateAllSessions(username);
+
+    await ctx.SignOutAsync(Microsoft.AspNetCore.Authentication.Cookies.CookieAuthenticationDefaults.AuthenticationScheme);
+    ctx.Response.Cookies.Delete("runspace_auth_v3");
+    ctx.Response.Cookies.Delete("runspace_auth_v2");
+    ctx.Response.Cookies.Delete("runspace_auth");
+    ctx.Response.Cookies.Delete("rs-dt");
+
+    AppHelpers.LogActivity(username, "rotate_account_key", $"From {ip}");
+
+    return Results.Ok(new
+    {
+        status = "ok",
+        message = "Account key rotated. Existing sessions were logged out.",
+        loggedOut = true
+    });
 });
 
 
@@ -2677,10 +4500,21 @@ app.MapPost("/api/auth/change-username", async (HttpContext ctx) =>
     var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
     if (!limiter.IsAllowed(u, "change_username", 2, 3600))
         return Results.Json(new { message = "Too many attempts." }, statusCode: 429);
-    var req = await ctx.Request.ReadFromJsonAsync<ChangeUsernameReq>();
+    // rs-change-username-defensive-v1
+    ChangeUsernameReq? req;
+    try
+    {
+        req = await ctx.Request.ReadFromJsonAsync<ChangeUsernameReq>();
+    }
+    catch
+    {
+        return Results.BadRequest(new { message = "Invalid JSON request." });
+    }
+
     if (req == null || string.IsNullOrWhiteSpace(req.NewUsername))
         return Results.BadRequest(new { message = "Username required." });
-    var newUsername = req.NewUsername.Trim().ToLowerInvariant();
+
+    var newUsername = DefensiveInput.CleanString(req.NewUsername, 32).ToLowerInvariant();
     if (!AppHelpers.IsValidUsername(newUsername))
         return Results.BadRequest(new { message = "Invalid username." });
     if (ReservedNames.IsReserved(newUsername))
@@ -2733,67 +4567,119 @@ app.MapHub<ChatHub>("/ws/chat");
 // ── Sponsors API ──
 app.MapGet("/api/sponsors", () =>
 {
-    using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     conn.Open();
+
     using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT Id, Name, Description, Url, LogoPath, CreatedAt, Links, DescriptionEn FROM Sponsors ORDER BY Id DESC";
+
     using var reader = cmd.ExecuteReader();
     var sponsors = new List<object>();
+
     while (reader.Read())
     {
         sponsors.Add(new
         {
             id = reader.GetInt32(0),
-            name = reader.GetString(1),
-            description = reader.IsDBNull(2) ? "" : reader.GetString(2),
-            url = reader.IsDBNull(3) ? "" : reader.GetString(3),
-            logoPath = reader.IsDBNull(4) ? "" : reader.GetString(4),
-            createdAt = reader.IsDBNull(5) ? "" : reader.GetString(5),
-            links = reader.IsDBNull(6) ? "[]" : reader.GetString(6),
-            descriptionEn = reader.IsDBNull(7) ? "" : reader.GetString(7)
+            name = DefensiveInput.CleanString(reader.IsDBNull(1) ? "" : reader.GetString(1), 120),
+            description = DefensiveInput.CleanString(reader.IsDBNull(2) ? "" : reader.GetString(2), 1000),
+            url = DefensiveInput.CleanString(reader.IsDBNull(3) ? "" : reader.GetString(3), 500),
+            logoPath = DefensiveInput.CleanString(reader.IsDBNull(4) ? "" : reader.GetString(4), 300),
+            createdAt = DefensiveInput.CleanString(reader.IsDBNull(5) ? "" : reader.GetString(5), 80),
+            links = DefensiveInput.CleanString(reader.IsDBNull(6) ? "[]" : reader.GetString(6), 4000),
+            descriptionEn = DefensiveInput.CleanString(reader.IsDBNull(7) ? "" : reader.GetString(7), 1000)
         });
     }
+
     return Results.Ok(sponsors);
 });
 
 app.MapPost("/api/sponsors", async (HttpContext ctx, HttpRequest request) =>
 {
-    var user = ctx.User.Identity;
-    var uname = ctx.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "";
-    if (user?.IsAuthenticated != true || !AppHelpers.IsAdmin(uname))
+    // rs-sponsors-defensive-v1
+    var admin = ctx.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value?.Trim().ToLowerInvariant() ?? "";
+    if (ctx.User.Identity?.IsAuthenticated != true || !AppHelpers.IsAdmin(admin))
         return Results.Unauthorized();
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(admin, "admin_sponsors_write", 30, 300))
+        return Results.Json(new { error = "Too many sponsor updates" }, statusCode: 429);
+
     if (!request.HasFormContentType)
         return Results.BadRequest(new { error = "Expected multipart form data" });
-    var form = await request.ReadFormAsync();
-    var name = form["name"].ToString().Trim();
-    if (string.IsNullOrEmpty(name))
+
+    IFormCollection form;
+    try
+    {
+        form = await request.ReadFormAsync();
+    }
+    catch
+    {
+        return Results.BadRequest(new { error = "Invalid form data" });
+    }
+
+    var name = DefensiveInput.CleanString(form["name"].ToString(), 120);
+    if (string.IsNullOrWhiteSpace(name))
         return Results.BadRequest(new { error = "Name is required" });
-    var description = form["description"].ToString().Trim();
-    var url = form["url"].ToString().Trim();
-    var links = form["links"].ToString().Trim();
-    if (string.IsNullOrEmpty(links)) links = "[]";
-    var descriptionEn = form["descriptionEn"].ToString().Trim();
+
+    var description = DefensiveInput.CleanString(form["description"].ToString(), 1000);
+    var descriptionEn = DefensiveInput.CleanString(form["descriptionEn"].ToString(), 1000);
+    var url = DefensiveInput.CleanString(form["url"].ToString(), 500);
+    var links = DefensiveInput.CleanString(form["links"].ToString(), 4000);
+
+    if (string.IsNullOrWhiteSpace(links))
+        links = "[]";
+
+    if (!string.IsNullOrWhiteSpace(url) &&
+        (!Uri.TryCreate(url, UriKind.Absolute, out var sponsorUri) ||
+         sponsorUri.Scheme is not ("https" or "http")))
+        return Results.BadRequest(new { error = "Invalid sponsor URL" });
+
+    try
+    {
+        using var linksDoc = JsonDocument.Parse(links);
+        if (linksDoc.RootElement.ValueKind is not (JsonValueKind.Array or JsonValueKind.Object))
+            return Results.BadRequest(new { error = "Invalid links JSON" });
+        links = JsonSerializer.Serialize(linksDoc.RootElement);
+    }
+    catch
+    {
+        return Results.BadRequest(new { error = "Invalid links JSON" });
+    }
+
     var logoPath = "";
     var logoFile = form.Files.GetFile("logo");
+
     if (logoFile != null && logoFile.Length > 0)
     {
-        var uploadsDir = "/root/RunSpace/data/uploads/sponsors";
+        if (logoFile.Length > 2_000_000)
+            return Results.Json(new { error = "Logo too large" }, statusCode: 413);
+
+        var uploadsDir = "/var/lib/runspace/data/uploads/sponsors";
         Directory.CreateDirectory(uploadsDir);
-        var ext = Path.GetExtension(logoFile.FileName).ToLowerInvariant();
+
+        var logoOriginalName = DefensiveInput.SafeFileName(logoFile.FileName);
+        var ext = Path.GetExtension(logoOriginalName).ToLowerInvariant();
         if (string.IsNullOrEmpty(ext)) ext = ".png";
-        var allowed = new[] { ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp" };
+
+        var allowed = new[] { ".png", ".jpg", ".jpeg", ".gif", ".webp" };
         if (!allowed.Contains(ext))
             return Results.BadRequest(new { error = "Invalid image format" });
+
         var filename = $"sponsor_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}{ext}";
         var fullPath = Path.Combine(uploadsDir, filename);
-        using (var stream = new FileStream(fullPath, FileMode.Create))
+
+        using (var stream = new FileStream(fullPath, FileMode.CreateNew))
         {
             await logoFile.CopyToAsync(stream);
         }
+
         logoPath = $"/uploads/sponsors/{filename}";
     }
-    using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+
+    using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     conn.Open();
+
     using var cmd = conn.CreateCommand();
     cmd.CommandText = "INSERT INTO Sponsors (Name, Description, Url, LogoPath, Links, DescriptionEn) VALUES (@name, @desc, @url, @logo, @links, @descEn); SELECT last_insert_rowid();";
     cmd.Parameters.AddWithValue("@name", name);
@@ -2802,46 +4688,106 @@ app.MapPost("/api/sponsors", async (HttpContext ctx, HttpRequest request) =>
     cmd.Parameters.AddWithValue("@logo", logoPath);
     cmd.Parameters.AddWithValue("@links", links);
     cmd.Parameters.AddWithValue("@descEn", descriptionEn);
+
     var newId = Convert.ToInt32(cmd.ExecuteScalar());
+
+    AppHelpers.LogActivity(admin, "admin_sponsor_create", "Id=" + newId);
+
     return Results.Ok(new { id = newId, name, description, url, logoPath, links, descriptionEn });
 }).DisableAntiforgery();
 
 app.MapPut("/api/sponsors/{id:int}", async (int id, HttpContext ctx, HttpRequest request) =>
 {
-    var user = ctx.User.Identity;
-    var uname = ctx.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "";
-    if (user?.IsAuthenticated != true || !AppHelpers.IsAdmin(uname))
+    var admin = ctx.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value?.Trim().ToLowerInvariant() ?? "";
+    if (ctx.User.Identity?.IsAuthenticated != true || !AppHelpers.IsAdmin(admin))
         return Results.Unauthorized();
+
+    if (id <= 0)
+        return Results.BadRequest(new { error = "Invalid sponsor id" });
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(admin, "admin_sponsors_write", 30, 300))
+        return Results.Json(new { error = "Too many sponsor updates" }, statusCode: 429);
+
     if (!request.HasFormContentType)
         return Results.BadRequest(new { error = "Expected multipart form data" });
-    var form = await request.ReadFormAsync();
-    var name = form["name"].ToString().Trim();
-    var description = form["description"].ToString().Trim();
-    var url = form["url"].ToString().Trim();
-    var links = form["links"].ToString().Trim();
-    if (string.IsNullOrEmpty(links)) links = "[]";
-    var descriptionEn = form["descriptionEn"].ToString().Trim();
-    var logoPath = form["existingLogo"].ToString().Trim();
+
+    IFormCollection form;
+    try
+    {
+        form = await request.ReadFormAsync();
+    }
+    catch
+    {
+        return Results.BadRequest(new { error = "Invalid form data" });
+    }
+
+    var name = DefensiveInput.CleanString(form["name"].ToString(), 120);
+    if (string.IsNullOrWhiteSpace(name))
+        return Results.BadRequest(new { error = "Name is required" });
+
+    var description = DefensiveInput.CleanString(form["description"].ToString(), 1000);
+    var descriptionEn = DefensiveInput.CleanString(form["descriptionEn"].ToString(), 1000);
+    var url = DefensiveInput.CleanString(form["url"].ToString(), 500);
+    var links = DefensiveInput.CleanString(form["links"].ToString(), 4000);
+    var logoPath = DefensiveInput.CleanString(form["existingLogo"].ToString(), 300);
+
+    if (string.IsNullOrWhiteSpace(links))
+        links = "[]";
+
+    if (!string.IsNullOrWhiteSpace(url) &&
+        (!Uri.TryCreate(url, UriKind.Absolute, out var sponsorUri) ||
+         sponsorUri.Scheme is not ("https" or "http")))
+        return Results.BadRequest(new { error = "Invalid sponsor URL" });
+
+    try
+    {
+        using var linksDoc = JsonDocument.Parse(links);
+        if (linksDoc.RootElement.ValueKind is not (JsonValueKind.Array or JsonValueKind.Object))
+            return Results.BadRequest(new { error = "Invalid links JSON" });
+        links = JsonSerializer.Serialize(linksDoc.RootElement);
+    }
+    catch
+    {
+        return Results.BadRequest(new { error = "Invalid links JSON" });
+    }
+
+    if (!string.IsNullOrWhiteSpace(logoPath) &&
+        !System.Text.RegularExpressions.Regex.IsMatch(logoPath, @"^/uploads/sponsors/sponsor_[0-9]+\.(png|jpg|jpeg|gif|webp)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        return Results.BadRequest(new { error = "Invalid existing logo path" });
+
     var logoFile = form.Files.GetFile("logo");
+
     if (logoFile != null && logoFile.Length > 0)
     {
-        var uploadsDir = "/root/RunSpace/data/uploads/sponsors";
+        if (logoFile.Length > 2_000_000)
+            return Results.Json(new { error = "Logo too large" }, statusCode: 413);
+
+        var uploadsDir = "/var/lib/runspace/data/uploads/sponsors";
         Directory.CreateDirectory(uploadsDir);
-        var ext = Path.GetExtension(logoFile.FileName).ToLowerInvariant();
+
+        var logoOriginalName = DefensiveInput.SafeFileName(logoFile.FileName);
+        var ext = Path.GetExtension(logoOriginalName).ToLowerInvariant();
         if (string.IsNullOrEmpty(ext)) ext = ".png";
-        var allowed = new[] { ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp" };
+
+        var allowed = new[] { ".png", ".jpg", ".jpeg", ".gif", ".webp" };
         if (!allowed.Contains(ext))
             return Results.BadRequest(new { error = "Invalid image format" });
+
         var filename = $"sponsor_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}{ext}";
         var fullPath = Path.Combine(uploadsDir, filename);
-        using (var stream = new FileStream(fullPath, FileMode.Create))
+
+        using (var stream = new FileStream(fullPath, FileMode.CreateNew))
         {
             await logoFile.CopyToAsync(stream);
         }
+
         logoPath = $"/uploads/sponsors/{filename}";
     }
-    using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+
+    using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     conn.Open();
+
     using var cmd = conn.CreateCommand();
     cmd.CommandText = "UPDATE Sponsors SET Name=@name, Description=@desc, Url=@url, LogoPath=@logo, Links=@links, DescriptionEn=@descEn WHERE Id=@id";
     cmd.Parameters.AddWithValue("@name", name);
@@ -2851,111 +4797,306 @@ app.MapPut("/api/sponsors/{id:int}", async (int id, HttpContext ctx, HttpRequest
     cmd.Parameters.AddWithValue("@links", links);
     cmd.Parameters.AddWithValue("@descEn", descriptionEn);
     cmd.Parameters.AddWithValue("@id", id);
+
     var rows = cmd.ExecuteNonQuery();
-    if (rows == 0) return Results.NotFound(new { error = "Sponsor not found" });
+
+    if (rows == 0)
+        return Results.NotFound(new { error = "Sponsor not found" });
+
+    AppHelpers.LogActivity(admin, "admin_sponsor_update", "Id=" + id);
+
     return Results.Ok(new { id, name, description, url, logoPath, links, descriptionEn });
 }).DisableAntiforgery();
 
 app.MapDelete("/api/sponsors/{id:int}", (int id, HttpContext ctx) =>
 {
-    var user = ctx.User.Identity;
-    var uname = ctx.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ?? "";
-    if (user?.IsAuthenticated != true || !AppHelpers.IsAdmin(uname))
+    var admin = ctx.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value?.Trim().ToLowerInvariant() ?? "";
+    if (ctx.User.Identity?.IsAuthenticated != true || !AppHelpers.IsAdmin(admin))
         return Results.Unauthorized();
-    using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+
+    if (id <= 0)
+        return Results.BadRequest(new { error = "Invalid sponsor id" });
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(admin, "admin_sponsors_write", 30, 300))
+        return Results.Json(new { error = "Too many sponsor updates" }, statusCode: 429);
+
+    using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     conn.Open();
+
     using var getCmd = conn.CreateCommand();
     getCmd.CommandText = "SELECT LogoPath FROM Sponsors WHERE Id = @id";
     getCmd.Parameters.AddWithValue("@id", id);
-    var logoPath = getCmd.ExecuteScalar() as string;
+
+    var logoPath = DefensiveInput.CleanString(getCmd.ExecuteScalar() as string, 300);
+
     using var delCmd = conn.CreateCommand();
     delCmd.CommandText = "DELETE FROM Sponsors WHERE Id = @id";
     delCmd.Parameters.AddWithValue("@id", id);
+
     var rows = delCmd.ExecuteNonQuery();
-    if (rows == 0) return Results.NotFound(new { error = "Sponsor not found" });
-    if (!string.IsNullOrEmpty(logoPath))
+
+    if (rows == 0)
+        return Results.NotFound(new { error = "Sponsor not found" });
+
+    if (!string.IsNullOrWhiteSpace(logoPath) &&
+        System.Text.RegularExpressions.Regex.IsMatch(logoPath, @"^/uploads/sponsors/sponsor_[0-9]+\.(png|jpg|jpeg|gif|webp)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
     {
-        var fullPath = $"/root/RunSpace/data{logoPath}";
-        if (System.IO.File.Exists(fullPath)) System.IO.File.Delete(fullPath);
+        var uploadsDir = "/var/lib/runspace/data/uploads/sponsors";
+        var fileName = Path.GetFileName(logoPath);
+        var fullPath = Path.GetFullPath(Path.Combine(uploadsDir, fileName));
+        var safeRoot = Path.GetFullPath(uploadsDir) + Path.DirectorySeparatorChar;
+
+        if (fullPath.StartsWith(safeRoot, StringComparison.Ordinal) && System.IO.File.Exists(fullPath))
+            System.IO.File.Delete(fullPath);
     }
+
+    AppHelpers.LogActivity(admin, "admin_sponsor_delete", "Id=" + id);
+
     return Results.Ok(new { deleted = true, id });
 });
 
 
 app.MapPost("/api/admin/badges/{target}", async (string target, HttpContext ctx) =>
 {
-    var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (!AppHelpers.IsAdmin(u)) return Results.Forbid();
-    var tgt = target.Trim().ToLowerInvariant();
-    if (!AppHelpers.UserExists(tgt)) return Results.NotFound(new { message = "User not found." });
-    using var body = await JsonDocument.ParseAsync(ctx.Request.Body);
-    var badges = body.RootElement.GetProperty("badges").EnumerateArray().Select(x => x.GetString()?.Trim().ToLowerInvariant()).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().Take(20).ToList();
-    using var db = DbHelpers.OpenDb();
-    using var cmd = db.CreateCommand();
-    cmd.CommandText = "UPDATE AuthUsers SET Badges = $b WHERE Username = $u";
-    cmd.Parameters.AddWithValue("$b", JsonSerializer.Serialize(badges));
-    cmd.Parameters.AddWithValue("$u", tgt);
-    cmd.ExecuteNonQuery();
-    AppHelpers.LogActivity(u!, "admin_badges", $"{tgt}: {string.Join(", ", badges)}");
-    return Results.Ok(new { success = true, badges });
+    // rs-admin-badges-status-patchnotes-defensive-v1
+    var admin = ctx.User.Identity?.Name?.Trim().ToLowerInvariant() ?? "";
+    if (!AppHelpers.IsAdmin(admin)) return Results.Forbid();
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(admin, "admin_profile_write", 60, 300))
+        return Results.Json(new { message = "Too many admin profile actions." }, statusCode: 429);
+
+    var tgt = DefensiveInput.CleanString(target, 32).ToLowerInvariant();
+    if (!DefensiveInput.IsUsername(tgt) || !AppHelpers.IsValidUsername(tgt))
+        return Results.BadRequest(new { message = "Invalid username." });
+
+    if (!AppHelpers.UserExists(tgt))
+        return Results.NotFound(new { message = "User not found." });
+
+    JsonDocument body;
+    try
+    {
+        body = await JsonDocument.ParseAsync(ctx.Request.Body);
+    }
+    catch
+    {
+        return Results.BadRequest(new { message = "Invalid JSON request." });
+    }
+
+    using (body)
+    {
+        if (body.RootElement.ValueKind != JsonValueKind.Object ||
+            !body.RootElement.TryGetProperty("badges", out var badgesEl) ||
+            badgesEl.ValueKind != JsonValueKind.Array)
+            return Results.BadRequest(new { message = "Invalid badges payload." });
+
+        var badges = badgesEl.EnumerateArray()
+            .Where(x => x.ValueKind == JsonValueKind.String)
+            .Select(x => DefensiveInput.CleanString(x.GetString(), 32).ToLowerInvariant())
+            .Where(x => System.Text.RegularExpressions.Regex.IsMatch(x, "^[a-z0-9_-]{1,32}$"))
+            .Distinct()
+            .Take(20)
+            .ToList();
+
+        using var db = DbHelpers.OpenDb();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "UPDATE AuthUsers SET Badges = $b WHERE Username = $u";
+        cmd.Parameters.AddWithValue("$b", JsonSerializer.Serialize(badges));
+        cmd.Parameters.AddWithValue("$u", tgt);
+        cmd.ExecuteNonQuery();
+
+        AppHelpers.LogActivity(admin, "admin_badges", $"{tgt}: {string.Join(", ", badges)}");
+        return Results.Ok(new { success = true, username = tgt, badges });
+    }
 });
 
 app.MapPost("/api/admin/status/{target}", async (string target, HttpContext ctx) =>
 {
-    var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (!AppHelpers.IsAdmin(u)) return Results.Forbid();
-    var tgt = target.Trim().ToLowerInvariant();
-    if (!AppHelpers.UserExists(tgt)) return Results.NotFound(new { message = "User not found." });
-    if (AppHelpers.IsAdmin(tgt)) return Results.BadRequest(new { message = "Cannot modify admin." });
-    using var body = await JsonDocument.ParseAsync(ctx.Request.Body);
-    var status = body.RootElement.GetProperty("status").GetString()?.Trim().ToLowerInvariant() ?? "verified";
-    var allowed = new[] { "verified", "banned", "suspended", "unverified" };
-    if (!allowed.Contains(status)) return Results.BadRequest(new { message = "Invalid status." });
-    using var db = DbHelpers.OpenDb();
-    using var cmd = db.CreateCommand();
-    cmd.CommandText = "UPDATE AuthUsers SET Status = $s WHERE Username = $u";
-    cmd.Parameters.AddWithValue("$s", status);
-    cmd.Parameters.AddWithValue("$u", tgt);
-    cmd.ExecuteNonQuery();
-    AppHelpers.LogActivity(u!, "admin_status", $"{tgt}: {status}");
-    return Results.Ok(new { success = true, status });
-});
+    var admin = ctx.User.Identity?.Name?.Trim().ToLowerInvariant() ?? "";
+    if (!AppHelpers.IsAdmin(admin)) return Results.Forbid();
 
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(admin, "admin_profile_write", 60, 300))
+        return Results.Json(new { message = "Too many admin profile actions." }, statusCode: 429);
+
+    var tgt = DefensiveInput.CleanString(target, 32).ToLowerInvariant();
+    if (!DefensiveInput.IsUsername(tgt) || !AppHelpers.IsValidUsername(tgt))
+        return Results.BadRequest(new { message = "Invalid username." });
+
+    if (!AppHelpers.UserExists(tgt))
+        return Results.NotFound(new { message = "User not found." });
+
+    if (AppHelpers.IsAdmin(tgt))
+        return Results.BadRequest(new { message = "Cannot modify admin." });
+
+    JsonDocument body;
+    try
+    {
+        body = await JsonDocument.ParseAsync(ctx.Request.Body);
+    }
+    catch
+    {
+        return Results.BadRequest(new { message = "Invalid JSON request." });
+    }
+
+    using (body)
+    {
+        if (body.RootElement.ValueKind != JsonValueKind.Object ||
+            !body.RootElement.TryGetProperty("status", out var statusEl) ||
+            statusEl.ValueKind != JsonValueKind.String)
+            return Results.BadRequest(new { message = "Invalid status payload." });
+
+        var status = DefensiveInput.CleanString(statusEl.GetString(), 32).ToLowerInvariant();
+        var allowed = new[] { "verified", "banned", "suspended", "unverified" };
+        if (!allowed.Contains(status))
+            return Results.BadRequest(new { message = "Invalid status." });
+
+        using var db = DbHelpers.OpenDb();
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "UPDATE AuthUsers SET Status = $s WHERE Username = $u";
+        cmd.Parameters.AddWithValue("$s", status);
+        cmd.Parameters.AddWithValue("$u", tgt);
+        cmd.ExecuteNonQuery();
+
+        AppHelpers.LogActivity(admin, "admin_status", $"{tgt}: {status}");
+        return Results.Ok(new { success = true, username = tgt, status });
+    }
+});
 
 app.MapPost("/api/admin/patch-notes", async (HttpContext ctx) =>
 {
-    var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (!AppHelpers.IsAdmin(u)) return Results.Forbid();
-    var body = await new StreamReader(ctx.Request.Body).ReadToEndAsync();
-    var path = Path.Combine(AppConfig.DataDir, "patch-notes.json");
-    await System.IO.File.WriteAllTextAsync(path, body);
-    return Results.Ok(new { success = true });
+    var admin = ctx.User.Identity?.Name?.Trim().ToLowerInvariant() ?? "";
+    if (!AppHelpers.IsAdmin(admin)) return Results.Forbid();
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(admin, "admin_patch_notes", 30, 300))
+        return Results.Json(new { message = "Too many patch note updates." }, statusCode: 429);
+
+    using var reader = new StreamReader(ctx.Request.Body);
+    var raw = await reader.ReadToEndAsync();
+
+    if (raw.Length > 128_000)
+        return Results.Json(new { message = "Patch notes payload too large." }, statusCode: 413);
+
+    if (raw.IndexOf('\0') >= 0)
+        return Results.BadRequest(new { message = "Invalid patch notes payload." });
+
+    JsonDocument doc;
+    try
+    {
+        doc = JsonDocument.Parse(raw);
+    }
+    catch
+    {
+        return Results.BadRequest(new { message = "Invalid JSON request." });
+    }
+
+    using (doc)
+    {
+        if (doc.RootElement.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array))
+            return Results.BadRequest(new { message = "Patch notes must be a JSON object or array." });
+
+        var json = System.Text.Json.JsonSerializer.Serialize(doc.RootElement);
+
+        Directory.CreateDirectory(AppConfig.DataDir);
+        var path = Path.Combine(AppConfig.DataDir, "patch-notes.json");
+        var tmp = path + ".tmp";
+
+        await System.IO.File.WriteAllTextAsync(tmp, json);
+        System.IO.File.Move(tmp, path, true);
+
+        AppHelpers.LogActivity(admin, "admin_patch_notes", "updated patch-notes.json");
+        return Results.Ok(new { success = true });
+    }
 });
 
 app.MapGet("/api/admin/patch-notes", async (HttpContext ctx) =>
 {
     var path = Path.Combine(AppConfig.DataDir, "patch-notes.json");
-    if (!System.IO.File.Exists(path)) return Results.Ok(new { notes = new List<object>() });
+    if (!System.IO.File.Exists(path))
+        return Results.Ok(new { notes = new List<object>() });
+
     var json = await System.IO.File.ReadAllTextAsync(path);
+
+    if (json.Length > 256_000)
+        return Results.Json(new { notes = new List<object>() });
+
+    try
+    {
+        using var doc = JsonDocument.Parse(json);
+        if (doc.RootElement.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array))
+            return Results.Json(new { notes = new List<object>() });
+    }
+    catch
+    {
+        return Results.Json(new { notes = new List<object>() });
+    }
+
     return Results.Content(json, "application/json");
 });
 
+
 app.MapPost("/api/admin/users/{username}/trust", async (string username, HttpContext ctx) =>
 {
-    var caller = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (string.IsNullOrWhiteSpace(caller) || !AppHelpers.IsAdmin(caller)) return Results.Json(new { message = "Ej behörig." }, statusCode: 403);
-    var body = await ctx.Request.ReadFromJsonAsync<TrustOverrideReq>();
-    if (body == null) return Results.BadRequest(new { message = "Invalid request." });
-    if (body.Score.HasValue && (body.Score.Value < 0 || body.Score.Value > 100)) return Results.BadRequest(new { message = "Score måste vara 0–100." });
-    var target = (username ?? "").Trim().ToLowerInvariant();
-    if (!AppHelpers.UserExists(target)) return Results.NotFound(new { message = "Användaren hittades inte." });
-    using var db = DbHelpers.OpenDb();
-    // Validera feature-namn
-    var validFeatures = new[] { "files", "links", "exec", "mention", "profile" };
-    if (body.DisableFeatures != null && body.DisableFeatures.Any(f => !validFeatures.Contains(f)))
-        return Results.BadRequest(new { message = "Ogiltiga feature-namn." });
-    if (body.MinTrust.HasValue && body.MaxTrust.HasValue && body.MinTrust > body.MaxTrust)
+    // rs-admin-trust-override-defensive-v1
+    var caller = ctx.User.Identity?.Name?.Trim().ToLowerInvariant() ?? "";
+    if (string.IsNullOrWhiteSpace(caller) || !AppHelpers.IsAdmin(caller))
+        return Results.Json(new { message = "Ej behörig." }, statusCode: 403);
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(caller, "admin_trust_override", 30, 300))
+        return Results.Json(new { message = "Too many admin trust actions." }, statusCode: 429);
+
+    TrustOverrideReq? body;
+    try
+    {
+        body = await ctx.Request.ReadFromJsonAsync<TrustOverrideReq>();
+    }
+    catch
+    {
+        return Results.BadRequest(new { message = "Invalid JSON request." });
+    }
+
+    if (body == null)
+        return Results.BadRequest(new { message = "Invalid request." });
+
+    var target = DefensiveInput.CleanString(username, 32).ToLowerInvariant();
+    if (!DefensiveInput.IsUsername(target) || !AppHelpers.IsValidUsername(target))
+        return Results.BadRequest(new { message = "Invalid username." });
+
+    if (!AppHelpers.UserExists(target))
+        return Results.NotFound(new { message = "Användaren hittades inte." });
+
+    if (body.Score.HasValue && (body.Score.Value < 0 || body.Score.Value > 100))
+        return Results.BadRequest(new { message = "Score måste vara 0-100." });
+
+    if (body.MinTrust.HasValue && (body.MinTrust.Value < 0 || body.MinTrust.Value > 100))
+        return Results.BadRequest(new { message = "MinTrust måste vara 0-100." });
+
+    if (body.MaxTrust.HasValue && (body.MaxTrust.Value < 0 || body.MaxTrust.Value > 100))
+        return Results.BadRequest(new { message = "MaxTrust måste vara 0-100." });
+
+    if (body.MinTrust.HasValue && body.MaxTrust.HasValue && body.MinTrust.Value > body.MaxTrust.Value)
         return Results.BadRequest(new { message = "MinTrust kan inte vara större än MaxTrust." });
+
+    var validFeatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "files", "links", "exec", "mention", "profile"
+    };
+
+    var disabledFeatures = (body.DisableFeatures ?? new List<string>())
+        .Select(f => DefensiveInput.CleanString(f, 32).ToLowerInvariant())
+        .Where(f => !string.IsNullOrWhiteSpace(f))
+        .Distinct()
+        .Take(20)
+        .ToList();
+
+    if (disabledFeatures.Any(f => !validFeatures.Contains(f)))
+        return Results.BadRequest(new { message = "Ogiltiga feature-namn." });
+
+    using var db = DbHelpers.OpenDb();
+
     using var upd = db.CreateCommand();
     upd.CommandText = @"UPDATE AuthUsers SET
         trust_override_min = $min,
@@ -2963,24 +5104,31 @@ app.MapPost("/api/admin/users/{username}/trust", async (string username, HttpCon
         trust_force_block  = $block,
         trust_disabled_features = $features
         WHERE Username=$u";
-    upd.Parameters.AddWithValue("$min",      body.MinTrust.HasValue  ? (object)body.MinTrust.Value  : DBNull.Value);
-    upd.Parameters.AddWithValue("$max",      body.MaxTrust.HasValue  ? (object)body.MaxTrust.Value  : DBNull.Value);
+    upd.Parameters.AddWithValue("$min",      body.MinTrust.HasValue ? (object)body.MinTrust.Value : DBNull.Value);
+    upd.Parameters.AddWithValue("$max",      body.MaxTrust.HasValue ? (object)body.MaxTrust.Value : DBNull.Value);
     upd.Parameters.AddWithValue("$block",    body.ForceBlock == true ? 1 : 0);
-    upd.Parameters.AddWithValue("$features", body.DisableFeatures != null ? System.Text.Json.JsonSerializer.Serialize(body.DisableFeatures) : DBNull.Value);
+    upd.Parameters.AddWithValue("$features", disabledFeatures.Count > 0 ? System.Text.Json.JsonSerializer.Serialize(disabledFeatures) : DBNull.Value);
     upd.Parameters.AddWithValue("$u", target);
     upd.ExecuteNonQuery();
-    // Logga override-event
+
+    var detailJson = System.Text.Json.JsonSerializer.Serialize(new {
+        min = body.MinTrust,
+        max = body.MaxTrust,
+        score = body.Score,
+        forceBlock = body.ForceBlock == true,
+        disableFeatures = disabledFeatures
+    });
+
     using var evtCmd = db.CreateCommand();
     evtCmd.CommandText = @"INSERT INTO SecurityEventLog (UserId, Timestamp, EventType, FromState, ToState, Details)
         SELECT Id, datetime('now'), 'OVERRIDE_SET', 'admin', $caller, $detail FROM AuthUsers WHERE Username=$u";
-    evtCmd.Parameters.AddWithValue("$caller", caller ?? "");
-    evtCmd.Parameters.AddWithValue("$detail", System.Text.Json.JsonSerializer.Serialize(new {
-        min = body.MinTrust, max = body.MaxTrust,
-        forceBlock = body.ForceBlock,
-        disableFeatures = body.DisableFeatures
-    }));
+    evtCmd.Parameters.AddWithValue("$caller", caller);
+    evtCmd.Parameters.AddWithValue("$detail", detailJson);
     evtCmd.Parameters.AddWithValue("$u", target);
     evtCmd.ExecuteNonQuery();
+
+    AppHelpers.LogActivity(caller, "admin_trust_override", "Target=" + target);
+
     return Results.Ok(new {
         username = target,
         setBy = caller,
@@ -2989,7 +5137,7 @@ app.MapPost("/api/admin/users/{username}/trust", async (string username, HttpCon
             minTrust = body.MinTrust,
             maxTrust = body.MaxTrust,
             forceBlock = body.ForceBlock ?? false,
-            disabledFeatures = body.DisableFeatures ?? new List<string>()
+            disabledFeatures = disabledFeatures
         }
     });
 });
@@ -2998,7 +5146,10 @@ app.MapGet("/api/admin/users/{username}/trust", (string username, HttpContext ct
 {
     var caller = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (!AppHelpers.IsAdmin(caller ?? "")) return Results.Json(new { message = "Ej behörig." }, statusCode: 403);
-    var target = (username ?? "").Trim().ToLowerInvariant();
+    var target = DefensiveInput.CleanString(username, 32).ToLowerInvariant();
+    if (!DefensiveInput.IsUsername(target) || !AppHelpers.IsValidUsername(target))
+        return Results.BadRequest(new { message = "Invalid username." });
+
     using var db = DbHelpers.OpenDb();
     using var cmd = db.CreateCommand();
     cmd.CommandText = @"SELECT CreatedAt, trust_identity, trust_behavior, trust_device,
@@ -3016,8 +5167,27 @@ app.MapGet("/api/admin/users/{username}/trust", (string username, HttpContext ct
     var composite = TrustEngine.CompositeScore(dims);
     var currentLevel = TrustEngine.ParseLevel(r.IsDBNull(8) ? "medium" : r.GetString(8));
     var trustLevel = TrustEngine.GetLevel(composite, currentLevel);
+
+    // rs-admin-security-queries-defensive-v1
+    var overrideMin = r.IsDBNull(4) ? (int?)null : r.GetInt32(4);
+    var overrideMax = r.IsDBNull(5) ? (int?)null : r.GetInt32(5);
+    var forceBlock = !r.IsDBNull(6) && r.GetInt32(6) == 1;
     var disabledRaw = r.IsDBNull(7) ? null : r.GetString(7);
+
+    List<string> disabledFeatures;
+    try
+    {
+        disabledFeatures = string.IsNullOrWhiteSpace(disabledRaw)
+            ? new List<string>()
+            : System.Text.Json.JsonSerializer.Deserialize<List<string>>(disabledRaw) ?? new List<string>();
+    }
+    catch
+    {
+        disabledFeatures = new List<string>();
+    }
+
     r.Close();
+
     return Results.Ok(new {
         username = target,
         accountAgeDays = (int)(DateTime.UtcNow - createdAt).TotalDays,
@@ -3031,12 +5201,10 @@ app.MapGet("/api/admin/users/{username}/trust", (string username, HttpContext ct
             }
         },
         overrides = new {
-            minTrust        = r.IsDBNull(4) ? (int?)null : r.GetInt32(4),
-            maxTrust        = r.IsDBNull(5) ? (int?)null : r.GetInt32(5),
-            forceBlock      = !r.IsDBNull(6) && r.GetInt32(6) == 1,
-            disabledFeatures = string.IsNullOrEmpty(disabledRaw)
-                ? new List<string>()
-                : System.Text.Json.JsonSerializer.Deserialize<List<string>>(disabledRaw)
+            minTrust        = overrideMin,
+            maxTrust        = overrideMax,
+            forceBlock      = forceBlock,
+            disabledFeatures = disabledFeatures
         }
     });
 });
@@ -3093,7 +5261,7 @@ app.MapGet("/api/admin/security/user/{username}", (string username, HttpContext 
     // Security events
     var events = new List<object>();
     using var evCmd = db.CreateCommand();
-    evCmd.CommandText = "SELECT EventType, Severity, Detail,  CreatedAt FROM SecurityEvents WHERE UserId=$uid ORDER BY Id DESC LIMIT 20";
+    evCmd.CommandText = "SELECT EventType, Severity, Detail, IpAddress, CreatedAt FROM SecurityEvents WHERE UserId=$uid ORDER BY Id DESC LIMIT 20";
     evCmd.Parameters.AddWithValue("$uid", userId);
     using var evR = evCmd.ExecuteReader();
     while (evR.Read()) events.Add(new { type = evR.GetString(0), severity = evR.GetString(1), detail = evR.IsDBNull(2) ? "" : evR.GetString(2), ip = evR.IsDBNull(3) ? "" : evR.GetString(3), at = evR.GetString(4) });
@@ -3101,7 +5269,7 @@ app.MapGet("/api/admin/security/user/{username}", (string username, HttpContext 
     // Firewall blocks
     var fwBlocks = new List<object>();
     using var fwCmd = db.CreateCommand();
-    fwCmd.CommandText = "SELECT RuleMatched, TrustLevel,  BlockedAt FROM FirewallBlocks WHERE UserId=$uid ORDER BY Id DESC LIMIT 20";
+    fwCmd.CommandText = "SELECT RuleMatched, TrustLevel, IpAddress, BlockedAt FROM FirewallBlocks WHERE UserId=$uid ORDER BY Id DESC LIMIT 20";
     fwCmd.Parameters.AddWithValue("$uid", userId);
     using var fwR = fwCmd.ExecuteReader();
     while (fwR.Read()) fwBlocks.Add(new { rule = fwR.GetString(0), trust = fwR.GetString(1), ip = fwR.IsDBNull(2) ? "" : fwR.GetString(2), at = fwR.GetString(3) });
@@ -3109,7 +5277,7 @@ app.MapGet("/api/admin/security/user/{username}", (string username, HttpContext 
     // File uploads
     var uploads = new List<object>();
     using var upCmd = db.CreateCommand();
-    upCmd.CommandText = "SELECT OriginalName, Extension, FileSizeBytes, Status, RejectionReason,  UploadedAt FROM FileUploads WHERE UserId=$uid ORDER BY Id DESC LIMIT 20";
+    upCmd.CommandText = "SELECT OriginalName, Extension, FileSizeBytes, Status, RejectionReason, IpAddress, UploadedAt FROM FileUploads WHERE UserId=$uid ORDER BY Id DESC LIMIT 20";
     upCmd.Parameters.AddWithValue("$uid", userId);
     using var upR = upCmd.ExecuteReader();
     while (upR.Read()) uploads.Add(new { name = upR.GetString(0), ext = upR.GetString(1), size = upR.GetInt64(2), status = upR.GetString(3), reason = upR.IsDBNull(4) ? "" : upR.GetString(4), ip = upR.IsDBNull(5) ? "" : upR.GetString(5), at = upR.GetString(6) });
@@ -3117,7 +5285,7 @@ app.MapGet("/api/admin/security/user/{username}", (string username, HttpContext 
     // Devices
     var devices = new List<object>();
     using var dvCmd = db.CreateCommand();
-    dvCmd.CommandText = @"SELECT dt.DeviceToken, dt.DeviceName, dt.UserAgent, dt. dt.FirstSeenAt, dt.LastSeenAt, dt.IsTrusted, dt.RiskFlags, dt.RiskScore, dt.SeenIpCount, dt.SessionCount, dt.MaturedAt,
+    dvCmd.CommandText = @"SELECT dt.DeviceToken, dt.DeviceName, dt.UserAgent, dt.IpAddress, dt.FirstSeenAt, dt.LastSeenAt, dt.IsTrusted, dt.RiskFlags, dt.RiskScore, dt.SeenIpCount, dt.SessionCount, dt.MaturedAt,
         (SELECT COUNT(DISTINCT UserId) FROM DeviceAccountLinks WHERE DeviceToken=dt.DeviceToken) as SharedAccounts
         FROM DeviceTokens dt WHERE dt.UserId=$uid ORDER BY dt.LastSeenAt DESC LIMIT 10";
     dvCmd.Parameters.AddWithValue("$uid", userId);
@@ -3146,7 +5314,7 @@ app.MapGet("/api/admin/security/events", (HttpContext ctx) =>
     using var db = DbHelpers.OpenDb();
     var events = new List<object>();
     using var cmd = db.CreateCommand();
-    cmd.CommandText = @"SELECT se.EventType, se.Severity, se.Detail, se. se.CreatedAt, au.Username
+    cmd.CommandText = @"SELECT se.EventType, se.Severity, se.Detail, se.IpAddress, se.CreatedAt, au.Username
         FROM SecurityEvents se LEFT JOIN AuthUsers au ON se.UserId = au.Id
         ORDER BY se.Id DESC LIMIT 50";
     using var r = cmd.ExecuteReader();
@@ -3160,7 +5328,7 @@ app.MapGet("/api/admin/security/firewall", (HttpContext ctx) =>
     using var db = DbHelpers.OpenDb();
     var blocks = new List<object>();
     using var cmd = db.CreateCommand();
-    cmd.CommandText = @"SELECT fb.RuleMatched, fb.TrustLevel, fb. fb.BlockedAt, au.Username
+    cmd.CommandText = @"SELECT fb.RuleMatched, fb.TrustLevel, fb.IpAddress, fb.BlockedAt, au.Username
         FROM FirewallBlocks fb LEFT JOIN AuthUsers au ON fb.UserId = au.Id
         ORDER BY fb.Id DESC LIMIT 50";
     using var r = cmd.ExecuteReader();
@@ -3170,82 +5338,193 @@ app.MapGet("/api/admin/security/firewall", (HttpContext ctx) =>
 
 app.MapPost("/api/admin/security/suspend/{target}", async (string target, HttpContext ctx) =>
 {
-    if (!AppHelpers.IsAdmin(ctx.User.Identity?.Name?.Trim().ToLowerInvariant())) return Results.Forbid();
-    var body = await ctx.Request.ReadFromJsonAsync<SuspendReq>();
-    var t = (target ?? "").Trim().ToLowerInvariant();
+    // rs-admin-security-write-defensive-v1
+    var admin = ctx.User.Identity?.Name?.Trim().ToLowerInvariant() ?? "";
+    if (!AppHelpers.IsAdmin(admin)) return Results.Forbid();
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(admin, "admin_security_write", 60, 300))
+        return Results.Json(new { message = "Too many admin actions." }, statusCode: 429);
+
+    SuspendReq? body;
+    try
+    {
+        body = await ctx.Request.ReadFromJsonAsync<SuspendReq>();
+    }
+    catch
+    {
+        return Results.BadRequest(new { message = "Invalid JSON request." });
+    }
+
+    var t = DefensiveInput.CleanString(target, 32).ToLowerInvariant();
+    if (!DefensiveInput.IsUsername(t) || !AppHelpers.IsValidUsername(t))
+        return Results.BadRequest(new { message = "Invalid username." });
+
     if (!AppHelpers.UserExists(t)) return Results.NotFound();
+
+    var reason = DefensiveInput.CleanString(body?.Reason, 500);
+    if (string.IsNullOrWhiteSpace(reason))
+        reason = "Admin suspension";
+
     using var db = DbHelpers.OpenDb();
+
     using var cmd = db.CreateCommand();
     cmd.CommandText = "UPDATE AuthUsers SET IsSuspended=1, SuspendedReason=$r WHERE Username=$u";
-    cmd.Parameters.AddWithValue("$r", body?.Reason ?? "Admin suspension");
+    cmd.Parameters.AddWithValue("$r", reason);
     cmd.Parameters.AddWithValue("$u", t);
     cmd.ExecuteNonQuery();
+
     using var evtCmd = db.CreateCommand();
     evtCmd.CommandText = @"INSERT INTO SecurityEvents (UserId, EventType, Severity, Detail, CreatedAt)
         SELECT Id, 'admin_suspend', 'alert', $d, datetime('now') FROM AuthUsers WHERE Username=$u";
-    evtCmd.Parameters.AddWithValue("$d", $"Suspended by admin. Reason: {body?.Reason}");
+    evtCmd.Parameters.AddWithValue("$d", "Suspended by admin. Reason: " + reason);
     evtCmd.Parameters.AddWithValue("$u", t);
     evtCmd.ExecuteNonQuery();
+
+    AppHelpers.LogActivity(admin, "admin_security_suspend", "Target=" + t);
+
     return Results.Ok(new { status = "suspended", username = t });
 });
 
 app.MapPost("/api/admin/security/unsuspend/{target}", (string target, HttpContext ctx) =>
 {
-    if (!AppHelpers.IsAdmin(ctx.User.Identity?.Name?.Trim().ToLowerInvariant())) return Results.Forbid();
-    var t = (target ?? "").Trim().ToLowerInvariant();
+    var admin = ctx.User.Identity?.Name?.Trim().ToLowerInvariant() ?? "";
+    if (!AppHelpers.IsAdmin(admin)) return Results.Forbid();
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(admin, "admin_security_write", 60, 300))
+        return Results.Json(new { message = "Too many admin actions." }, statusCode: 429);
+
+    var t = DefensiveInput.CleanString(target, 32).ToLowerInvariant();
+    if (!DefensiveInput.IsUsername(t) || !AppHelpers.IsValidUsername(t))
+        return Results.BadRequest(new { message = "Invalid username." });
+
+    if (!AppHelpers.UserExists(t)) return Results.NotFound();
+
     using var db = DbHelpers.OpenDb();
+
     using var cmd = db.CreateCommand();
     cmd.CommandText = "UPDATE AuthUsers SET IsSuspended=0, SuspendedReason=NULL WHERE Username=$u";
     cmd.Parameters.AddWithValue("$u", t);
-    cmd.ExecuteNonQuery();
-    return Results.Ok(new { status = "unsuspended", username = t });
+    var changed = cmd.ExecuteNonQuery();
+
+    using var evtCmd = db.CreateCommand();
+    evtCmd.CommandText = @"INSERT INTO SecurityEvents (UserId, EventType, Severity, Detail, CreatedAt)
+        SELECT Id, 'admin_unsuspend', 'info', $d, datetime('now') FROM AuthUsers WHERE Username=$u";
+    evtCmd.Parameters.AddWithValue("$d", "Unsuspended by admin.");
+    evtCmd.Parameters.AddWithValue("$u", t);
+    evtCmd.ExecuteNonQuery();
+
+    AppHelpers.LogActivity(admin, "admin_security_unsuspend", "Target=" + t);
+
+    return Results.Ok(new { status = "unsuspended", username = t, changed });
 });
 
 app.MapPost("/api/admin/security/set-trust/{target}", async (string target, HttpContext ctx) =>
 {
-    if (!AppHelpers.IsAdmin(ctx.User.Identity?.Name?.Trim().ToLowerInvariant())) return Results.Forbid();
-    var body = await ctx.Request.ReadFromJsonAsync<SetTrustReq>();
-    var t = (target ?? "").Trim().ToLowerInvariant();
+    var admin = ctx.User.Identity?.Name?.Trim().ToLowerInvariant() ?? "";
+    if (!AppHelpers.IsAdmin(admin)) return Results.Forbid();
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(admin, "admin_security_write", 60, 300))
+        return Results.Json(new { message = "Too many admin actions." }, statusCode: 429);
+
+    SetTrustReq? body;
+    try
+    {
+        body = await ctx.Request.ReadFromJsonAsync<SetTrustReq>();
+    }
+    catch
+    {
+        return Results.BadRequest(new { message = "Invalid JSON request." });
+    }
+
+    var t = DefensiveInput.CleanString(target, 32).ToLowerInvariant();
+    if (!DefensiveInput.IsUsername(t) || !AppHelpers.IsValidUsername(t))
+        return Results.BadRequest(new { message = "Invalid username." });
+
     if (!AppHelpers.UserExists(t)) return Results.NotFound();
+
+    var level = DefensiveInput.CleanString(body?.Level, 20).ToLowerInvariant();
+    if (level is not ("low" or "medium" or "high" or "blocked"))
+        level = "medium";
+
+    var score = Math.Clamp(body?.Score ?? 50, 0, 100);
+
     using var db = DbHelpers.OpenDb();
+
     using var cmd = db.CreateCommand();
     cmd.CommandText = "UPDATE AuthUsers SET TrustLevel=$lvl, TrustScore=$score WHERE Username=$u";
-    cmd.Parameters.AddWithValue("$lvl", body?.Level ?? "medium");
-    cmd.Parameters.AddWithValue("$score", body?.Score ?? 50);
+    cmd.Parameters.AddWithValue("$lvl", level);
+    cmd.Parameters.AddWithValue("$score", score);
     cmd.Parameters.AddWithValue("$u", t);
     cmd.ExecuteNonQuery();
+
     using var histCmd = db.CreateCommand();
     histCmd.CommandText = @"INSERT INTO TrustHistory (UserId, TrustLevel, TrustScore, Reason, CreatedAt)
         SELECT Id, $lvl, $score, 'admin_override', datetime('now') FROM AuthUsers WHERE Username=$u";
-    histCmd.Parameters.AddWithValue("$lvl", body?.Level ?? "medium");
-    histCmd.Parameters.AddWithValue("$score", body?.Score ?? 50);
+    histCmd.Parameters.AddWithValue("$lvl", level);
+    histCmd.Parameters.AddWithValue("$score", score);
     histCmd.Parameters.AddWithValue("$u", t);
     histCmd.ExecuteNonQuery();
-    return Results.Ok(new { status = "ok", username = t, level = body?.Level, score = body?.Score });
+
+    AppHelpers.LogActivity(admin, "admin_security_set_trust", $"Target={t} Level={level} Score={score}");
+
+    return Results.Ok(new { status = "ok", username = t, level, score });
 });
 
 app.MapPost("/api/admin/security/clear-penalties/{target}", (string target, HttpContext ctx) =>
 {
-    if (!AppHelpers.IsAdmin(ctx.User.Identity?.Name?.Trim().ToLowerInvariant())) return Results.Forbid();
-    var t = (target ?? "").Trim().ToLowerInvariant();
+    var admin = ctx.User.Identity?.Name?.Trim().ToLowerInvariant() ?? "";
+    if (!AppHelpers.IsAdmin(admin)) return Results.Forbid();
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(admin, "admin_security_write", 60, 300))
+        return Results.Json(new { message = "Too many admin actions." }, statusCode: 429);
+
+    var t = DefensiveInput.CleanString(target, 32).ToLowerInvariant();
+    if (!DefensiveInput.IsUsername(t) || !AppHelpers.IsValidUsername(t))
+        return Results.BadRequest(new { message = "Invalid username." });
+
+    if (!AppHelpers.UserExists(t)) return Results.NotFound();
+
     using var db = DbHelpers.OpenDb();
+
     using var cmd = db.CreateCommand();
     cmd.CommandText = "DELETE FROM TrustPenalties WHERE UserId=(SELECT Id FROM AuthUsers WHERE Username=$u)";
     cmd.Parameters.AddWithValue("$u", t);
     var deleted = cmd.ExecuteNonQuery();
-    return Results.Ok(new { status = "ok", deletedPenalties = deleted });
+
+    AppHelpers.LogActivity(admin, "admin_security_clear_penalties", "Target=" + t);
+
+    return Results.Ok(new { status = "ok", username = t, deletedPenalties = deleted });
 });
 
 app.MapPost("/api/admin/security/reset-devices/{target}", (string target, HttpContext ctx) =>
 {
-    if (!AppHelpers.IsAdmin(ctx.User.Identity?.Name?.Trim().ToLowerInvariant())) return Results.Forbid();
-    var t = (target ?? "").Trim().ToLowerInvariant();
+    var admin = ctx.User.Identity?.Name?.Trim().ToLowerInvariant() ?? "";
+    if (!AppHelpers.IsAdmin(admin)) return Results.Forbid();
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(admin, "admin_security_write", 60, 300))
+        return Results.Json(new { message = "Too many admin actions." }, statusCode: 429);
+
+    var t = DefensiveInput.CleanString(target, 32).ToLowerInvariant();
+    if (!DefensiveInput.IsUsername(t) || !AppHelpers.IsValidUsername(t))
+        return Results.BadRequest(new { message = "Invalid username." });
+
+    if (!AppHelpers.UserExists(t)) return Results.NotFound();
+
     using var db = DbHelpers.OpenDb();
+
     using var cmd = db.CreateCommand();
     cmd.CommandText = "DELETE FROM DeviceTokens WHERE UserId=(SELECT Id FROM AuthUsers WHERE Username=$u)";
     cmd.Parameters.AddWithValue("$u", t);
     var deleted = cmd.ExecuteNonQuery();
-    return Results.Ok(new { status = "ok", deletedDevices = deleted });
+
+    AppHelpers.LogActivity(admin, "admin_security_reset_devices", "Target=" + t);
+
+    return Results.Ok(new { status = "ok", username = t, deletedDevices = deleted });
 });
 
 
@@ -3258,19 +5537,44 @@ app.MapPost("/api/support/ticket", async (HttpContext ctx) =>
     var body = await ctx.Request.ReadFromJsonAsync<SupportTicketReq>();
     if (body == null) return Results.BadRequest(new { message = "Invalid request." });
 
-    var username = (body.Username ?? "").Trim().ToLowerInvariant();
-    var category = InputSanitizer.SanitizeInput(body.Category ?? "", 50);
-    var subject  = InputSanitizer.SanitizeInput(body.Subject ?? "", 200);
-    var desc     = InputSanitizer.SanitizeInput(body.Description ?? "", 2000);
+    // rs-support-ticket-defensive-v1
+    // Public endpoint: keep all user-provided text bounded and predictable.
+    var authUser = ctx.User.Identity?.Name?.Trim().ToLowerInvariant() ?? "";
+    var username = DefensiveInput.CleanString(body.Username, 32).ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(username))
+        username = string.IsNullOrWhiteSpace(authUser) ? "guest" : authUser;
+    if (username != "guest" && !DefensiveInput.IsUsername(username))
+        username = "guest";
+
+    var category = DefensiveInput.CleanString(body.Category, 50);
+    var subject  = DefensiveInput.CleanString(body.Subject, 160);
+    var desc     = DefensiveInput.CleanString(body.Description, 2000);
+
+    if (category.Length == 0) category = "General";
+    if (category.Contains('\0') || subject.Contains('\0') || desc.Contains('\0'))
+        return Results.BadRequest(new { message = "Invalid request." });
+
+    var isLiveCall = category.Equals("Live call", StringComparison.OrdinalIgnoreCase);
 
     var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
     var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-    if (!string.Equals(category, "Live call", StringComparison.OrdinalIgnoreCase)
-        && !limiter.IsAllowed(ip, "support_ticket", 3, 3600))
-        return Results.Json(new { message = "Too many tickets. Please wait an hour." }, statusCode: 429);
+
+    if (isLiveCall)
+    {
+        if (!limiter.IsAllowed(ip, "support_live_call", 2, 3600))
+            return Results.Json(new { message = "Too many live support requests. Please wait an hour." }, statusCode: 429);
+    }
+    else
+    {
+        if (!limiter.IsAllowed(ip, "support_ticket", 3, 3600))
+            return Results.Json(new { message = "Too many tickets. Please wait an hour." }, statusCode: 429);
+    }
 
     if (string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(desc))
         return Results.BadRequest(new { message = "Subject and description required." });
+
+    if (ContentFilter.IsOffensive(subject) || ContentFilter.IsOffensive(desc))
+        return Results.BadRequest(new { message = "Otillåtet innehåll." });
 
     var ticketId = "RS-" + DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()[^5..] +
                    "-" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(2));
@@ -3293,12 +5597,12 @@ app.MapPost("/api/support/ticket", async (HttpContext ctx) =>
     foreach (var admin in ticketAdmins) {
         await hubContext.Clients.User(admin).SendAsync("ReceiveMessage", new {
             fromUser = "system",
-            message = category.Equals("Live call", StringComparison.OrdinalIgnoreCase)
+            message = isLiveCall
                 ? $"Incoming live support request from {username} ({ticketId})"
                 : $"New support ticket: {subject}",
             category = category,
             ticketId = ticketId,
-            supportType = category.Equals("Live call", StringComparison.OrdinalIgnoreCase) ? "live_call" : "ticket",
+            supportType = isLiveCall ? "live_call" : "ticket",
             createdAt = DateTime.UtcNow.ToString("o")
         });
     }
@@ -3413,7 +5717,7 @@ app.MapPost("/api/support/discord-send", async (HttpContext ctx, IHttpClientFact
     var botToken = Environment.GetEnvironmentVariable("DISCORD_BOT_TOKEN");
     if (string.IsNullOrWhiteSpace(botToken))
     {
-        Console.WriteLine("[Discord Support] DISCORD_BOT_TOKEN not configured");
+        Console.WriteLine("[Discord Support] integration not configured.");
         return Results.Json(new { message = "Discord support is not configured." }, statusCode: 503);
     }
 
@@ -3447,7 +5751,7 @@ app.MapPost("/api/support/discord-send", async (HttpContext ctx, IHttpClientFact
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Discord Support] OpenDM exception: {ex.Message}");
+            Console.WriteLine("[Discord Support] OpenDM exception.");
             return null;
         }
     }
@@ -3474,7 +5778,7 @@ app.MapPost("/api/support/discord-send", async (HttpContext ctx, IHttpClientFact
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[Discord Support] Send exception: {ex.Message}");
+            Console.WriteLine("[Discord Support] Send exception.");
             return false;
         }
     }
@@ -3568,14 +5872,20 @@ app.MapPost("/api/support/tickets/{ticketId}/reply", async (string ticketId, Htt
 {
     var user = ctx.User?.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(user)) return Results.Unauthorized();
+
+    // rs-support-user-reply-defensive-v1
+    if (!DefensiveInput.IsSupportTicketId(ticketId))
+        return Results.BadRequest(new { message = "Invalid ticket id." });
+    ticketId = ticketId.Trim().ToUpperInvariant();
+
     var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
     if (!limiter.IsAllowed(user, "support_reply", 20, 3600))
         return Results.Json(new { message = "Too many replies. Please wait a while." }, statusCode: 429);
     SupportReplyDto? body;
     try { body = await ctx.Request.ReadFromJsonAsync<SupportReplyDto>(); }
     catch { return Results.BadRequest(new { message = "Invalid request." }); }
-    var msg = InputSanitizer.SanitizeInput(body?.Message?.Trim() ?? "", 4000);
-    if (string.IsNullOrEmpty(msg)) return Results.BadRequest(new { message = "Message is required." });
+    var msg = DefensiveInput.CleanString(body?.Message, 4000);
+    if (string.IsNullOrWhiteSpace(msg)) return Results.BadRequest(new { message = "Message is required." });
     using var db = DbHelpers.OpenDb();
     string? owner = null; string? currentStatus = null;
     using (var cmd = db.CreateCommand())
@@ -3671,11 +5981,17 @@ app.MapPost("/api/admin/support/tickets/{ticketId}/reply", async (string ticketI
 {
     var user = ctx.User?.Identity?.Name?.Trim().ToLowerInvariant();
     if (!AppHelpers.IsAdmin(user)) return Results.Forbid();
+
+    // rs-support-admin-reply-defensive-v1
+    if (!DefensiveInput.IsSupportTicketId(ticketId))
+        return Results.BadRequest(new { message = "Invalid ticket id." });
+    ticketId = ticketId.Trim().ToUpperInvariant();
+
     SupportReplyDto? body;
     try { body = await ctx.Request.ReadFromJsonAsync<SupportReplyDto>(); }
     catch { return Results.BadRequest(new { message = "Invalid request." }); }
-    var msg = InputSanitizer.SanitizeInput(body?.Message?.Trim() ?? "", 4000);
-    if (string.IsNullOrEmpty(msg)) return Results.BadRequest(new { message = "Message is required." });
+    var msg = DefensiveInput.CleanString(body?.Message, 4000);
+    if (string.IsNullOrWhiteSpace(msg)) return Results.BadRequest(new { message = "Message is required." });
     using var db = DbHelpers.OpenDb();
     string? targetUser = null;
     using (var cmd = db.CreateCommand())
@@ -3713,10 +6029,16 @@ app.MapPost("/api/admin/support/tickets/{ticketId}/status", async (string ticket
 {
     var user = ctx.User?.Identity?.Name?.Trim().ToLowerInvariant();
     if (!AppHelpers.IsAdmin(user)) return Results.Forbid();
+
+    // rs-support-status-defensive-v1
+    if (!DefensiveInput.IsSupportTicketId(ticketId))
+        return Results.BadRequest(new { message = "Invalid ticket id." });
+    ticketId = ticketId.Trim().ToUpperInvariant();
+
     SupportStatusDto? body;
     try { body = await ctx.Request.ReadFromJsonAsync<SupportStatusDto>(); }
     catch { return Results.BadRequest(new { message = "Invalid request." }); }
-    var status = (body?.Status ?? "").Trim().ToLowerInvariant();
+    var status = DefensiveInput.CleanString(body?.Status, 40).ToLowerInvariant();
     var allowed = new[] { "open", "in_progress", "waiting_for_user", "resolved", "closed" };
     if (!allowed.Contains(status)) return Results.BadRequest(new { message = "Invalid status." });
     var now = DateTime.UtcNow.ToString("o");
@@ -3746,11 +6068,19 @@ app.MapPost("/api/admin/support/tickets/{ticketId}/assign", async (string ticket
 {
     var user = ctx.User?.Identity?.Name?.Trim().ToLowerInvariant();
     if (!AppHelpers.IsAdmin(user)) return Results.Forbid();
+
+    // rs-support-assign-defensive-v1
+    if (!DefensiveInput.IsSupportTicketId(ticketId))
+        return Results.BadRequest(new { message = "Invalid ticket id." });
+    ticketId = ticketId.Trim().ToUpperInvariant();
+
     SupportAssignDto? body;
     try { body = await ctx.Request.ReadFromJsonAsync<SupportAssignDto>(); }
     catch { return Results.BadRequest(new { message = "Invalid request." }); }
-    var target = (body?.AssignedTo ?? "").Trim().ToLowerInvariant();
+    var target = DefensiveInput.CleanString(body?.AssignedTo, 32).ToLowerInvariant();
     if (target == "me") target = user!;
+    if (!string.IsNullOrWhiteSpace(target) && !DefensiveInput.IsUsername(target))
+        return Results.BadRequest(new { message = "Invalid assignee." });
     if (!string.IsNullOrEmpty(target) && !AppHelpers.IsAdmin(target))
         return Results.BadRequest(new { message = "Can only assign to admins." });
     using var db = DbHelpers.OpenDb();
@@ -3769,10 +6099,16 @@ app.MapPost("/api/admin/support/tickets/{ticketId}/priority", async (string tick
 {
     var user = ctx.User?.Identity?.Name?.Trim().ToLowerInvariant();
     if (!AppHelpers.IsAdmin(user)) return Results.Forbid();
+
+    // rs-support-priority-defensive-v1
+    if (!DefensiveInput.IsSupportTicketId(ticketId))
+        return Results.BadRequest(new { message = "Invalid ticket id." });
+    ticketId = ticketId.Trim().ToUpperInvariant();
+
     SupportPriorityDto? body;
     try { body = await ctx.Request.ReadFromJsonAsync<SupportPriorityDto>(); }
     catch { return Results.BadRequest(new { message = "Invalid request." }); }
-    var priority = (body?.Priority ?? "").Trim().ToLowerInvariant();
+    var priority = DefensiveInput.CleanString(body?.Priority, 20).ToLowerInvariant();
     var allowed = new[] { "low", "normal", "high", "urgent" };
     if (!allowed.Contains(priority)) return Results.BadRequest(new { message = "Invalid priority." });
     using var db = DbHelpers.OpenDb();
@@ -4054,7 +6390,10 @@ app.MapPost("/api/groups/{groupId}/icon", async (string groupId, HttpContext ctx
     var file = form.Files["icon"];
     if (file == null || file.Length == 0 || file.Length > 5 * 1024 * 1024)
         return Results.BadRequest(new { error = "Fil saknas eller för stor (max 5MB)." });
-    var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+
+    // rs-upload-filename-defensive-v2-group-icon
+    var originalName = DefensiveInput.SafeFileName(file.FileName);
+    var ext = Path.GetExtension(originalName).ToLowerInvariant();
     if (!new[] { ".png", ".jpg", ".jpeg", ".gif", ".webp" }.Contains(ext))
         return Results.BadRequest(new { error = "Ogiltigt format." });
     if (!await FileValidator.IsValidImageAsync(file))
@@ -4188,7 +6527,7 @@ app.MapPost("/api/stripe/checkout/script", async (HttpContext ctx) =>
     
     if (scriptId == 0) return Results.BadRequest(new { error = "scriptId required" });
     
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
     
     using var cmd = db.CreateCommand();
@@ -4264,7 +6603,7 @@ app.MapPost("/api/stripe/webhook", async (HttpContext ctx) =>
         {
             var username = session.Metadata["username"];
             var plan = session.Metadata["plan"];
-            using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+            using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
             db.Open();
             using var cmd = db.CreateCommand();
             cmd.CommandText = "UPDATE AuthUsers SET IsPremium=1, PremiumPlan=$plan, PremiumSince=$t, PremiumUntil=$until, StripeSubscriptionId=$subId WHERE LOWER(Username)=$u";
@@ -4823,7 +7162,7 @@ app.MapPost("/api/market/auth/register", async (HttpContext ctx) =>
     if (string.IsNullOrWhiteSpace(password) || password.Length < 8)
         return Results.Json(new { error = "Password must be at least 8 characters." }, statusCode: 400);
     
-    using var db = new SqliteConnection($"Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection($"Data Source=/var/lib/runspace/runspace.db");
     db.Open();
     
     using var chkUser = db.CreateCommand();
@@ -4861,7 +7200,7 @@ app.MapPost("/api/market/auth/link-runspace", (HttpContext ctx) =>
     if (string.IsNullOrWhiteSpace(authUser) || !AppHelpers.UserExists(authUser))
         return Results.Unauthorized();
     
-    using var db = new SqliteConnection($"Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection($"Data Source=/var/lib/runspace/runspace.db");
     db.Open();
     
     using var getAuth = db.CreateCommand();
@@ -4911,7 +7250,7 @@ app.MapPost("/api/market/auth/login", async (HttpContext ctx) =>
     if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
         return Results.Json(new { error = "Email and password required." }, statusCode: 400);
     
-    using var db = new SqliteConnection($"Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection($"Data Source=/var/lib/runspace/runspace.db");
     db.Open();
     
     using var cmd = db.CreateCommand();
@@ -4947,7 +7286,7 @@ app.MapPost("/api/market/auth/login", async (HttpContext ctx) =>
     ctx.Response.Cookies.Append("market_session", $"{id}:{username}", new CookieOptions
     {
         HttpOnly = true,
-        Secure = false,
+        Secure = true,
         SameSite = SameSiteMode.Lax,
         MaxAge = TimeSpan.FromDays(30),
         Domain = ".runspace.cloud"
@@ -4974,7 +7313,7 @@ app.MapPost("/api/market/auth/logout", (HttpContext ctx) =>
 // ── Market Profile: Get public profile ──
 app.MapGet("/api/market/profile/{userId}", (string userId, HttpContext ctx) =>
 {
-    using var db = new SqliteConnection($"Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection($"Data Source=/var/lib/runspace/runspace.db");
     db.Open();
     
     using var cmd = db.CreateCommand();
@@ -5055,7 +7394,7 @@ app.MapPut("/api/market/profile", async (HttpContext ctx) =>
     var bio = json.TryGetProperty("bio", out var b) ? b.GetString() ?? "" : "";
     if (bio.Length > 500) bio = bio.Substring(0, 500);
     
-    using var db = new SqliteConnection($"Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection($"Data Source=/var/lib/runspace/runspace.db");
     db.Open();
     
     using var cmd = db.CreateCommand();
@@ -5088,7 +7427,7 @@ app.MapPost("/api/market/feedback/{sellerId}", async (string sellerId, HttpConte
         return Results.Json(new { error = "Valid scriptId and rating (1-5) required." }, statusCode: 400);
     if (comment.Length > 1000) comment = comment.Substring(0, 1000);
     
-    using var db = new SqliteConnection($"Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection($"Data Source=/var/lib/runspace/runspace.db");
     db.Open();
     
     using var chkPurchase = db.CreateCommand();
@@ -5665,30 +8004,55 @@ app.MapGet("/api/desktop/version", async () =>
 // ═══════════════════════════════════════════════════════════════
 
 // POST /api/encryption/register-keys - Register or update user's encryption keys
+
 app.MapPost("/api/encryption/register-keys", async (HttpContext ctx) =>
 {
-    var userId = ctx.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-    if (string.IsNullOrEmpty(userId))
+    var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(username))
         return Results.Unauthorized();
 
-    using var reader = new StreamReader(ctx.Request.Body);
-    var body = await reader.ReadToEndAsync();
-    var data = JsonSerializer.Deserialize<JsonElement>(body);
+    // rs-encryption-register-keys-defensive-v1
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(username, "encryption_register_keys", 10, 3600))
+        return Results.Json(new { message = "Rate limit." }, statusCode: 429);
 
-    if (!data.TryGetProperty("publicKey", out var pubKeyEl) || 
+    JsonElement data;
+    try
+    {
+        var parsed = await ctx.Request.ReadFromJsonAsync<JsonElement>();
+        data = parsed;
+    }
+    catch
+    {
+        return Results.BadRequest(new { message = "Invalid JSON." });
+    }
+
+    if (!data.TryGetProperty("publicKey", out var pubKeyEl) ||
         !data.TryGetProperty("encryptedPrivateKey", out var privKeyEl))
-        return Results.BadRequest(new { message = "Public and private keys are required" });
+        return Results.BadRequest(new { message = "Public and private keys are required." });
 
-    var publicKey = pubKeyEl.GetString();
-    var encryptedPrivateKey = privKeyEl.GetString();
+    var rawPublicKey = pubKeyEl.GetString();
+    var rawEncryptedPrivateKey = privKeyEl.GetString();
 
-    if (string.IsNullOrWhiteSpace(publicKey) || string.IsNullOrWhiteSpace(encryptedPrivateKey))
-        return Results.BadRequest(new { message = "Invalid keys" });
+    if (!DefensiveInput.TryNormalizeRsaPublicKey(rawPublicKey, 8192, out var publicKey))
+        return Results.BadRequest(new { message = "Invalid public key." });
 
-    using var conn = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    if (!DefensiveInput.IsSafeBase64ish(rawEncryptedPrivateKey, 65536))
+        return Results.BadRequest(new { message = "Invalid encrypted private key." });
+
+    var encryptedPrivateKey = rawEncryptedPrivateKey!.Trim();
+
+    using var conn = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     await conn.OpenAsync();
+    var userIdCmd = conn.CreateCommand();
+    userIdCmd.CommandText = "SELECT Id FROM AuthUsers WHERE LOWER(Username)=LOWER(@username) LIMIT 1";
+    userIdCmd.Parameters.AddWithValue("@username", username);
+    var userIdObj = await userIdCmd.ExecuteScalarAsync();
+    if (userIdObj == null || userIdObj == DBNull.Value)
+        return Results.Unauthorized();
+    var userId = Convert.ToInt64(userIdObj);
 
-    // Check if keys exist
+
     var checkCmd = conn.CreateCommand();
     checkCmd.CommandText = "SELECT COUNT(*) FROM UserEncryptionKeys WHERE UserId = @userId";
     checkCmd.Parameters.AddWithValue("@userId", userId);
@@ -5696,11 +8060,10 @@ app.MapPost("/api/encryption/register-keys", async (HttpContext ctx) =>
 
     if (exists)
     {
-        // Update existing keys
         var updateCmd = conn.CreateCommand();
         updateCmd.CommandText = @"
-            UPDATE UserEncryptionKeys 
-            SET PublicKey = @pubKey, 
+            UPDATE UserEncryptionKeys
+            SET PublicKey = @pubKey,
                 EncryptedPrivateKey = @privKey,
                 KeyVersion = KeyVersion + 1,
                 UpdatedAt = @now
@@ -5713,10 +8076,9 @@ app.MapPost("/api/encryption/register-keys", async (HttpContext ctx) =>
     }
     else
     {
-        // Insert new keys
         var insertCmd = conn.CreateCommand();
         insertCmd.CommandText = @"
-            INSERT INTO UserEncryptionKeys 
+            INSERT INTO UserEncryptionKeys
             (UserId, PublicKey, EncryptedPrivateKey, KeyVersion, CreatedAt, UpdatedAt)
             VALUES (@userId, @pubKey, @privKey, 1, @now, @now)";
         insertCmd.Parameters.AddWithValue("@userId", userId);
@@ -5729,15 +8091,22 @@ app.MapPost("/api/encryption/register-keys", async (HttpContext ctx) =>
     return Results.Ok(new { message = "Keys registered successfully" });
 }).RequireAuthorization();
 
-// GET /api/encryption/my-keys - Get current user's encryption keys
 app.MapGet("/api/encryption/my-keys", async (HttpContext ctx) =>
 {
-    var userId = ctx.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-    if (string.IsNullOrEmpty(userId))
+    var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(username))
         return Results.Unauthorized();
 
-    using var conn = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var conn = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     await conn.OpenAsync();
+    var userIdCmd = conn.CreateCommand();
+    userIdCmd.CommandText = "SELECT Id FROM AuthUsers WHERE LOWER(Username)=LOWER(@username) LIMIT 1";
+    userIdCmd.Parameters.AddWithValue("@username", username);
+    var userIdObj = await userIdCmd.ExecuteScalarAsync();
+    if (userIdObj == null || userIdObj == DBNull.Value)
+        return Results.Unauthorized();
+    var userId = Convert.ToInt64(userIdObj);
+
 
     var cmd = conn.CreateCommand();
     cmd.CommandText = @"
@@ -5761,21 +8130,25 @@ app.MapGet("/api/encryption/my-keys", async (HttpContext ctx) =>
 }).RequireAuthorization();
 
 // GET /api/encryption/public-key/{username} - Get another user's public key
+
 app.MapGet("/api/encryption/public-key/{username}", async (string username) =>
 {
-    if (string.IsNullOrWhiteSpace(username))
-        return Results.BadRequest(new { message = "Username is required" });
+    // rs-encryption-public-key-defensive-v1
+    var target = DefensiveInput.CleanString(username, 32).ToLowerInvariant();
 
-    using var conn = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    if (!DefensiveInput.IsUsername(target) || !AppHelpers.IsValidUsername(target))
+        return Results.BadRequest(new { message = "Invalid username." });
+
+    using var conn = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     await conn.OpenAsync();
 
     var cmd = conn.CreateCommand();
     cmd.CommandText = @"
         SELECT uek.PublicKey, uek.KeyVersion
         FROM UserEncryptionKeys uek
-        INNER JOIN Users u ON u.Id = uek.UserId
-        WHERE LOWER(u.Username) = LOWER(@username)";
-    cmd.Parameters.AddWithValue("@username", username);
+        INNER JOIN AuthUsers u ON u.Id = uek.UserId
+        WHERE LOWER(u.Username) = @username";
+    cmd.Parameters.AddWithValue("@username", target);
 
     using var reader = await cmd.ExecuteReaderAsync();
     if (await reader.ReadAsync())
@@ -5790,19 +8163,13 @@ app.MapGet("/api/encryption/public-key/{username}", async (string username) =>
     return Results.NotFound(new { message = "User has no encryption keys" });
 }).RequireAuthorization();
 
-
-
-// ═══════════════════════════════════════════════════════════════
-// Session security middleware removed - using ASP.NET auth only
-
-// POST /api/auth/logout-all-devices - Force logout from all devices
 app.MapPost("/api/auth/logout-all-devices", async (HttpContext ctx) =>
 {
-    var username = ctx.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrEmpty(username))
         return Results.Unauthorized();
     
-    using var conn = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var conn = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     await conn.OpenAsync();
     
     // Delete all sessions for this user
@@ -5820,11 +8187,11 @@ app.MapPost("/api/auth/logout-all-devices", async (HttpContext ctx) =>
 // GET /api/auth/active-sessions - List active sessions
 app.MapGet("/api/auth/active-sessions", async (HttpContext ctx) =>
 {
-    var username = ctx.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrEmpty(username))
         return Results.Unauthorized();
     
-    using var conn = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var conn = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     await conn.OpenAsync();
     
     var cmd = conn.CreateCommand();
@@ -5839,7 +8206,7 @@ app.MapGet("/api/auth/active-sessions", async (HttpContext ctx) =>
     using var reader = await cmd.ExecuteReaderAsync();
     while (await reader.ReadAsync())
     {
-        var currentSessionId = ctx.Request.Cookies["runspace_auth"];
+        var currentSessionId = ctx.Request.Cookies["runspace_auth_v3"];
         var isCurrentSession = reader.GetString(0) == currentSessionId;
         
         sessions.Add(new
@@ -5883,30 +8250,378 @@ app.MapGet("/api/gif/search", async (string? q, HttpContext ctx) => {
 
 
 
+
+// ── Account Recovery Codes ──
+// These are for lost Account Key recovery, not 2FA backup codes.
+app.MapGet("/api/auth/account-recovery/status", (HttpContext ctx) =>
+{
+    var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(username))
+        return Results.Unauthorized();
+
+    using var db = DbHelpers.OpenDb();
+
+    using (var migrate = db.CreateCommand())
+    {
+        migrate.CommandText = @"
+            CREATE TABLE IF NOT EXISTS AccountRecoveryCodes (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Username TEXT NOT NULL,
+                CodeHash TEXT NOT NULL,
+                UsedAt TEXT,
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );";
+        migrate.ExecuteNonQuery();
+    }
+
+    using (var idx = db.CreateCommand())
+    {
+        idx.CommandText = "CREATE INDEX IF NOT EXISTS IX_AccountRecoveryCodes_Username ON AccountRecoveryCodes(Username);";
+        idx.ExecuteNonQuery();
+    }
+
+    using var count = db.CreateCommand();
+    count.CommandText = @"
+        SELECT COUNT(*)
+        FROM AccountRecoveryCodes
+        WHERE LOWER(Username)=LOWER($u)
+          AND UsedAt IS NULL";
+    count.Parameters.AddWithValue("$u", username);
+
+    var remaining = Convert.ToInt32(count.ExecuteScalar() ?? 0);
+
+    return Results.Ok(new
+    {
+        ok = true,
+        remaining
+    });
+});
+
+app.MapPost("/api/auth/account-recovery/generate", (HttpContext ctx) =>
+{
+    var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(username))
+        return Results.Unauthorized();
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    if (!limiter.IsAllowed(ip + ":" + username, "account_recovery_generate", 3, 3600))
+        return Results.Json(new { ok = false, message = "Too many recovery code generations. Try again later." }, statusCode: 429);
+
+    static string HashAccountRecoveryCode(string code)
+    {
+        var normalized = (code ?? "").Trim().ToLowerInvariant();
+        var material = "runspace:account-recovery:v1:" + normalized;
+
+        using var hmac = new System.Security.Cryptography.HMACSHA256(
+            System.Text.Encoding.UTF8.GetBytes(AppConfig.PasswordPepper)
+        );
+
+        return Convert.ToHexString(
+            hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(material))
+        ).ToLowerInvariant();
+    }
+
+    static string NewRecoveryCode()
+    {
+        var raw = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
+        return "rsr-" + raw.Substring(0, 4) + "-" + raw.Substring(4, 4) + "-" + raw.Substring(8, 4) + "-" + raw.Substring(12, 4);
+    }
+
+    using var db = DbHelpers.OpenDb();
+
+    using (var migrate = db.CreateCommand())
+    {
+        migrate.CommandText = @"
+            CREATE TABLE IF NOT EXISTS AccountRecoveryCodes (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Username TEXT NOT NULL,
+                CodeHash TEXT NOT NULL,
+                UsedAt TEXT,
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );";
+        migrate.ExecuteNonQuery();
+    }
+
+    using (var idx = db.CreateCommand())
+    {
+        idx.CommandText = "CREATE INDEX IF NOT EXISTS IX_AccountRecoveryCodes_Username ON AccountRecoveryCodes(Username);";
+        idx.ExecuteNonQuery();
+    }
+
+    var codes = new List<string>();
+
+    using var tx = db.BeginTransaction();
+
+    using (var del = db.CreateCommand())
+    {
+        del.Transaction = tx;
+        del.CommandText = "DELETE FROM AccountRecoveryCodes WHERE LOWER(Username)=LOWER($u)";
+        del.Parameters.AddWithValue("$u", username);
+        del.ExecuteNonQuery();
+    }
+
+    for (var i = 0; i < 10; i++)
+    {
+        var code = NewRecoveryCode();
+        codes.Add(code);
+
+        using var ins = db.CreateCommand();
+        ins.Transaction = tx;
+        ins.CommandText = @"
+            INSERT INTO AccountRecoveryCodes (Username, CodeHash, CreatedAt)
+            VALUES ($u, $h, datetime('now'))";
+        ins.Parameters.AddWithValue("$u", username);
+        ins.Parameters.AddWithValue("$h", HashAccountRecoveryCode(code));
+        ins.ExecuteNonQuery();
+    }
+
+    tx.Commit();
+
+    AppHelpers.LogActivity(username, "account_recovery_codes_generated", $"From {ip}");
+
+    return Results.Ok(new
+    {
+        ok = true,
+        codes,
+        remaining = codes.Count,
+        message = "Recovery codes generated. Store them safely. They are shown only once."
+    });
+});
+
+
+app.MapPost("/api/auth/account-recovery/redeem", async (HttpContext ctx) =>
+{
+    var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    System.Text.Json.JsonElement body;
+    try
+    {
+        body = await ctx.Request.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+    }
+    catch
+    {
+        return Results.BadRequest(new { ok = false, message = "Invalid request body." });
+    }
+
+    string username = "";
+    string recoveryCode = "";
+    string newAccountKey = "";
+
+    if (body.ValueKind == System.Text.Json.JsonValueKind.Object)
+    {
+        if (body.TryGetProperty("username", out var u1)) username = u1.GetString() ?? "";
+        if (body.TryGetProperty("Username", out var u2) && string.IsNullOrWhiteSpace(username)) username = u2.GetString() ?? "";
+
+        if (body.TryGetProperty("recoveryCode", out var c1)) recoveryCode = c1.GetString() ?? "";
+        if (body.TryGetProperty("RecoveryCode", out var c2) && string.IsNullOrWhiteSpace(recoveryCode)) recoveryCode = c2.GetString() ?? "";
+
+        if (body.TryGetProperty("accountKey", out var k1)) newAccountKey = k1.GetString() ?? "";
+        if (body.TryGetProperty("AccountKey", out var k2) && string.IsNullOrWhiteSpace(newAccountKey)) newAccountKey = k2.GetString() ?? "";
+    }
+
+    username = DefensiveInput.CleanString(username, 32).Trim().ToLowerInvariant();
+    recoveryCode = DefensiveInput.CleanString(recoveryCode, 64).Trim().ToLowerInvariant();
+    newAccountKey = AccountKeyHashing.Normalize(newAccountKey);
+
+    if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(recoveryCode) || string.IsNullOrWhiteSpace(newAccountKey))
+        return Results.BadRequest(new { ok = false, message = "Username, recovery code and new Account Key are required." });
+
+    if (!DefensiveInput.IsUsername(username) || !AppHelpers.IsValidUsername(username))
+        return Results.Json(new { ok = false, message = "Invalid username or recovery code." }, statusCode: 401);
+
+    if (!System.Text.RegularExpressions.Regex.IsMatch(
+        recoveryCode,
+        @"^rsr-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+    {
+        return Results.Json(new { ok = false, message = "Invalid username or recovery code." }, statusCode: 401);
+    }
+
+    if (!System.Text.RegularExpressions.Regex.IsMatch(
+        newAccountKey,
+        @"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+    {
+        return Results.BadRequest(new { ok = false, message = "Invalid new Account Key format." });
+    }
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(ip + ":" + username, "account_recovery_redeem", 5, 3600))
+        return Results.Json(new { ok = false, message = "Too many recovery attempts. Try again later." }, statusCode: 429);
+
+    static string HashAccountRecoveryCode(string code)
+    {
+        var normalized = (code ?? "").Trim().ToLowerInvariant();
+        var material = "runspace:account-recovery:v1:" + normalized;
+
+        using var hmac = new System.Security.Cryptography.HMACSHA256(
+            System.Text.Encoding.UTF8.GetBytes(AppConfig.PasswordPepper)
+        );
+
+        return Convert.ToHexString(
+            hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(material))
+        ).ToLowerInvariant();
+    }
+
+    var recoveryHash = HashAccountRecoveryCode(recoveryCode);
+    var newAccountKeyHash = AccountKeyHashing.Hash(newAccountKey);
+
+    using var db = DbHelpers.OpenDb();
+
+    using (var migrate = db.CreateCommand())
+    {
+        migrate.CommandText = @"
+            CREATE TABLE IF NOT EXISTS AccountRecoveryCodes (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                Username TEXT NOT NULL,
+                CodeHash TEXT NOT NULL,
+                UsedAt TEXT,
+                CreatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );";
+        migrate.ExecuteNonQuery();
+    }
+
+    using var tx = db.BeginTransaction();
+
+    long codeId = 0;
+
+    using (var find = db.CreateCommand())
+    {
+        find.Transaction = tx;
+        find.CommandText = @"
+            SELECT Id
+            FROM AccountRecoveryCodes
+            WHERE LOWER(Username)=LOWER($u)
+              AND CodeHash=$h
+              AND UsedAt IS NULL
+            LIMIT 1";
+        find.Parameters.AddWithValue("$u", username);
+        find.Parameters.AddWithValue("$h", recoveryHash);
+
+        var obj = find.ExecuteScalar();
+        if (obj == null || obj == DBNull.Value)
+        {
+            tx.Rollback();
+            return Results.Json(new { ok = false, message = "Invalid username or recovery code." }, statusCode: 401);
+        }
+
+        codeId = Convert.ToInt64(obj);
+    }
+
+    using (var dup = db.CreateCommand())
+    {
+        dup.Transaction = tx;
+        dup.CommandText = @"
+            SELECT COUNT(*)
+            FROM AuthUsers
+            WHERE (AccountKeyHash=$kh OR AccountKey=$k)
+              AND LOWER(Username) <> LOWER($u)";
+        dup.Parameters.AddWithValue("$kh", newAccountKeyHash);
+        dup.Parameters.AddWithValue("$k", newAccountKey);
+        dup.Parameters.AddWithValue("$u", username);
+
+        if (Convert.ToInt32(dup.ExecuteScalar() ?? 0) > 0)
+        {
+            tx.Rollback();
+            return Results.Json(new { ok = false, message = "New Account Key already in use." }, statusCode: 409);
+        }
+    }
+
+    using (var updUser = db.CreateCommand())
+    {
+        updUser.Transaction = tx;
+        updUser.CommandText = @"
+            UPDATE AuthUsers
+            SET AccountKey=$k,
+                AccountKeyHash=$kh
+            WHERE LOWER(Username)=LOWER($u)";
+        updUser.Parameters.AddWithValue("$k", newAccountKey);
+        updUser.Parameters.AddWithValue("$kh", newAccountKeyHash);
+        updUser.Parameters.AddWithValue("$u", username);
+
+        var changed = updUser.ExecuteNonQuery();
+        if (changed <= 0)
+        {
+            tx.Rollback();
+            return Results.Json(new { ok = false, message = "Invalid username or recovery code." }, statusCode: 401);
+        }
+    }
+
+    using (var mark = db.CreateCommand())
+    {
+        mark.Transaction = tx;
+        mark.CommandText = @"
+            UPDATE AccountRecoveryCodes
+            SET UsedAt=datetime('now')
+            WHERE LOWER(Username)=LOWER($u)
+              AND UsedAt IS NULL";
+        mark.Parameters.AddWithValue("$u", username);
+        mark.ExecuteNonQuery();
+    }
+
+    using (var delSessions = db.CreateCommand())
+    {
+        delSessions.Transaction = tx;
+        delSessions.CommandText = "DELETE FROM PersistentSessions WHERE LOWER(Username)=LOWER($u)";
+        delSessions.Parameters.AddWithValue("$u", username);
+        delSessions.ExecuteNonQuery();
+    }
+
+    tx.Commit();
+
+    ctx.RequestServices.GetRequiredService<SessionManager>().InvalidateAllSessions(username);
+    AppHelpers.LogActivity(username, "account_recovery_redeemed", $"CodeId={codeId} From {ip}");
+
+    return Results.Ok(new
+    {
+        ok = true,
+        message = "Account recovered. New Account Key activated. Existing sessions were logged out.",
+        preview = newAccountKey.Substring(0, 8) + "..."
+    });
+});
+
 // ── Key Recovery Request ──
+
 app.MapPost("/api/auth/request-key-reset", async (HttpContext ctx) =>
 {
-    var req = await ctx.Request.ReadFromJsonAsync<KeyResetReq>();
+    // rs-key-reset-request-defensive-v1
+    var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(ip, "key_reset_request", 5, 3600))
+        return Results.Json(new { ok = true, message = "If the account exists and the email is verified, a recovery request has been created." });
+
+    KeyResetReq? req;
+    try
+    {
+        req = await ctx.Request.ReadFromJsonAsync<KeyResetReq>();
+    }
+    catch
+    {
+        return Results.Json(new { ok = true, message = "If the account exists and the email is verified, a recovery request has been created." });
+    }
 
     if (req == null)
-        return Results.Json(new { ok = true });
+        return Results.Json(new { ok = true, message = "If the account exists and the email is verified, a recovery request has been created." });
 
-    var username = req.Username?.Trim() ?? "";
-    var email = req.Email?.Trim() ?? "";
-    var reason = req.Reason?.Trim() ?? "";
+    var username = DefensiveInput.CleanString(req.Username, 32).ToLowerInvariant();
+    var email = DefensiveInput.CleanString(req.Email, 254).ToLowerInvariant();
+    var reason = DefensiveInput.CleanString(req.Reason, 500);
+    var ua = DefensiveInput.CleanString(ctx.Request.Headers.UserAgent.ToString(), 512);
 
-    if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(email))
-        return Results.Json(new { ok = true });
+    if (!DefensiveInput.IsUsername(username) || !AppHelpers.IsValidUsername(username) || !DefensiveInput.IsEmail(email))
+        return Results.Json(new { ok = true, message = "If the account exists and the email is verified, a recovery request has been created." });
 
-    using var db = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     await db.OpenAsync();
 
     using var cmd = db.CreateCommand();
     cmd.CommandText = @"
         SELECT Id, Username, Email
         FROM AuthUsers
-        WHERE LOWER(Username) = LOWER($u)
-          AND LOWER(Email) = LOWER($e)
+        WHERE LOWER(Username) = $u
+          AND LOWER(Email) = $e
           AND EmailVerified = 1
         LIMIT 1";
     cmd.Parameters.AddWithValue("$u", username);
@@ -5930,11 +8645,11 @@ app.MapPost("/api/auth/request-key-reset", async (HttpContext ctx) =>
         ins.Parameters.AddWithValue("$u", realUsername);
         ins.Parameters.AddWithValue("$e", realEmail);
         ins.Parameters.AddWithValue("$reason", reason);
-        ins.Parameters.AddWithValue("$ip", ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown");
-        ins.Parameters.AddWithValue("$ua", ctx.Request.Headers.UserAgent.ToString());
+        ins.Parameters.AddWithValue("$ip", ip);
+        ins.Parameters.AddWithValue("$ua", ua);
         await ins.ExecuteNonQueryAsync();
 
-        Console.WriteLine($"[KEY-RESET] Request created for {realUsername}");
+        Console.WriteLine("[security] recovery started.");
     }
 
     return Results.Json(new
@@ -5944,16 +8659,13 @@ app.MapPost("/api/auth/request-key-reset", async (HttpContext ctx) =>
     });
 });
 
-
-
-// ── Admin Key Recovery ──
 app.MapGet("/api/admin/key-reset-requests", async (HttpContext ctx) =>
 {
     var adminUser = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(adminUser) || !AppHelpers.IsAdmin(adminUser))
         return Results.Forbid();
 
-    using var db = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     await db.OpenAsync();
 
     using var cmd = db.CreateCommand();
@@ -5989,17 +8701,34 @@ app.MapGet("/api/admin/key-reset-requests", async (HttpContext ctx) =>
     return Results.Json(new { ok = true, requests = list });
 });
 
+
 app.MapPost("/api/admin/key-reset-reject", async (HttpContext ctx) =>
 {
     var adminUser = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(adminUser) || !AppHelpers.IsAdmin(adminUser))
         return Results.Forbid();
 
-    var req = await ctx.Request.ReadFromJsonAsync<KeyResetRejectReq>();
+    // rs-key-reset-reject-defensive-v1
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(adminUser, "key_reset_reject", 30, 900))
+        return Results.Json(new { error = "Rate limit." }, statusCode: 429);
+
+    KeyResetRejectReq? req;
+    try
+    {
+        req = await ctx.Request.ReadFromJsonAsync<KeyResetRejectReq>();
+    }
+    catch
+    {
+        return Results.BadRequest(new { error = "Invalid request." });
+    }
+
     if (req == null || req.RequestId <= 0)
         return Results.BadRequest(new { error = "Invalid request." });
 
-    using var db = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    var reason = DefensiveInput.CleanString(req.Reason, 500);
+
+    using var db = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     await db.OpenAsync();
 
     using var cmd = db.CreateCommand();
@@ -6011,7 +8740,7 @@ app.MapPost("/api/admin/key-reset-reject", async (HttpContext ctx) =>
             AdminNote=$reason
         WHERE Id=$id AND Status='pending'";
     cmd.Parameters.AddWithValue("$id", req.RequestId);
-    cmd.Parameters.AddWithValue("$reason", req.Reason ?? "");
+    cmd.Parameters.AddWithValue("$reason", reason);
 
     var changed = await cmd.ExecuteNonQueryAsync();
     return Results.Json(new { ok = changed > 0 });
@@ -6023,11 +8752,29 @@ app.MapPost("/api/admin/key-reset-approve", async (HttpContext ctx) =>
     if (string.IsNullOrWhiteSpace(adminUser) || !AppHelpers.IsAdmin(adminUser))
         return Results.Forbid();
 
-    var req = await ctx.Request.ReadFromJsonAsync<KeyResetApproveReq>();
+    // rs-key-reset-approve-defensive-v1
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(adminUser, "key_reset_approve", 10, 900))
+        return Results.Json(new { error = "Rate limit." }, statusCode: 429);
+
+    KeyResetApproveReq? req;
+    try
+    {
+        req = await ctx.Request.ReadFromJsonAsync<KeyResetApproveReq>();
+    }
+    catch
+    {
+        return Results.BadRequest(new { error = "Invalid request." });
+    }
+
     if (req == null || req.RequestId <= 0 || string.IsNullOrWhiteSpace(req.Passphrase))
         return Results.BadRequest(new { error = "RequestId and passphrase required." });
 
-    using var db = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    var passphrase = req.Passphrase;
+    if (passphrase.Length < 8 || passphrase.Length > 512 || passphrase.Contains('\0'))
+        return Results.BadRequest(new { error = "Invalid passphrase." });
+
+    using var db = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     await db.OpenAsync();
 
     using var get = db.CreateCommand();
@@ -6058,7 +8805,7 @@ app.MapPost("/api/admin/key-reset-approve", async (HttpContext ctx) =>
     var iv = System.Security.Cryptography.RandomNumberGenerator.GetBytes(12);
 
     var keyMaterial = System.Security.Cryptography.Rfc2898DeriveBytes.Pbkdf2(
-        System.Text.Encoding.UTF8.GetBytes(req.Passphrase),
+        System.Text.Encoding.UTF8.GetBytes(passphrase),
         salt,
         100000,
         System.Security.Cryptography.HashAlgorithmName.SHA256,
@@ -6080,8 +8827,9 @@ app.MapPost("/api/admin/key-reset-approve", async (HttpContext ctx) =>
         .ToArray();
 
     using var updUser = db.CreateCommand();
-    updUser.CommandText = "UPDATE AuthUsers SET AccountKey=$key WHERE Id=$uid";
+    updUser.CommandText = "UPDATE AuthUsers SET AccountKey=$key, AccountKeyHash=$keyHash WHERE Id=$uid";
     updUser.Parameters.AddWithValue("$key", newKey);
+    updUser.Parameters.AddWithValue("$keyHash", AccountKeyHashing.Hash(newKey));
     updUser.Parameters.AddWithValue("$uid", userId);
     await updUser.ExecuteNonQueryAsync();
 
@@ -6097,7 +8845,7 @@ app.MapPost("/api/admin/key-reset-approve", async (HttpContext ctx) =>
 
     await SmtpMailService.SendKeyFileAsync(email, username, keyFileBytes, newKey);
 
-    Console.WriteLine($"[KEY-RESET] Approved request {req.RequestId} and sent new key to {email}");
+    Console.WriteLine("[security] recovery approved.");
 
     return Results.Json(new { ok = true, message = "New key generated and sent." });
 });
@@ -6107,27 +8855,39 @@ app.MapPost("/api/admin/key-reset-approve", async (HttpContext ctx) =>
 
 app.MapPost("/api/key-change/validate", async (HttpContext ctx) =>
 {
-    using var reader = new StreamReader(ctx.Request.Body);
-    var body = await reader.ReadToEndAsync();
+    // rs-key-change-validate-defensive-v1
+    var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(ip, "key_change_validate", 60, 900))
+        return Results.Json(new { ok = false, error = "rate_limited" }, statusCode: 429);
 
-    string token = "";
+    JsonElement root;
     try
     {
-        using var doc = System.Text.Json.JsonDocument.Parse(body);
-        token = doc.RootElement.GetProperty("token").GetString() ?? "";
+        root = await ctx.Request.ReadFromJsonAsync<JsonElement>();
     }
     catch
     {
         return Results.BadRequest(new { ok = false, error = "invalid_body" });
     }
 
-    if (string.IsNullOrWhiteSpace(token) || token.Length < 20)
+    if (root.ValueKind != JsonValueKind.Object ||
+        !root.TryGetProperty("token", out var tokenEl) ||
+        tokenEl.ValueKind != JsonValueKind.String)
+        return Results.BadRequest(new { ok = false, error = "invalid_token" });
+
+    var token = tokenEl.GetString()?.Trim() ?? "";
+
+    if (token.Length < 20 ||
+        token.Length > 512 ||
+        token.Contains('\0') ||
+        !System.Text.RegularExpressions.Regex.IsMatch(token, @"^[A-Za-z0-9._~+/=-]{20,512}$"))
         return Results.BadRequest(new { ok = false, error = "invalid_token" });
 
     var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
     var tokenHash = Convert.ToHexString(hashBytes).ToLowerInvariant();
 
-    using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     await conn.OpenAsync();
 
     var cmd = conn.CreateCommand();
@@ -6162,27 +8922,39 @@ app.MapPost("/api/key-change/validate", async (HttpContext ctx) =>
 
 app.MapPost("/api/key-change/consume", async (HttpContext ctx) =>
 {
-    using var reader = new StreamReader(ctx.Request.Body);
-    var body = await reader.ReadToEndAsync();
+    // rs-key-change-consume-defensive-v1
+    var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(ip, "key_change_consume", 60, 900))
+        return Results.Json(new { ok = false, error = "rate_limited" }, statusCode: 429);
 
-    string token = "";
+    JsonElement root;
     try
     {
-        using var doc = System.Text.Json.JsonDocument.Parse(body);
-        token = doc.RootElement.GetProperty("token").GetString() ?? "";
+        root = await ctx.Request.ReadFromJsonAsync<JsonElement>();
     }
     catch
     {
         return Results.BadRequest(new { ok = false, error = "invalid_body" });
     }
 
-    if (string.IsNullOrWhiteSpace(token) || token.Length < 20)
+    if (root.ValueKind != JsonValueKind.Object ||
+        !root.TryGetProperty("token", out var tokenEl) ||
+        tokenEl.ValueKind != JsonValueKind.String)
+        return Results.BadRequest(new { ok = false, error = "invalid_token" });
+
+    var token = tokenEl.GetString()?.Trim() ?? "";
+
+    if (token.Length < 20 ||
+        token.Length > 512 ||
+        token.Contains('\0') ||
+        !System.Text.RegularExpressions.Regex.IsMatch(token, @"^[A-Za-z0-9._~+/=-]{20,512}$"))
         return Results.BadRequest(new { ok = false, error = "invalid_token" });
 
     var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
     var tokenHash = Convert.ToHexString(hashBytes).ToLowerInvariant();
 
-    using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     await conn.OpenAsync();
 
     var now = DateTimeOffset.UtcNow.ToString("O");
@@ -6207,16 +8979,23 @@ app.MapPost("/api/key-change/consume", async (HttpContext ctx) =>
 });
 
 
+
 app.MapDelete("/api/me/devices/{deviceId}", (string deviceId, HttpContext ctx) =>
 {
-    var username = ctx.User?.Identity?.Name;
+    var username = ctx.User?.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(username))
         return Results.Unauthorized();
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    // rs-me-device-delete-defensive-v1
+    var did = DefensiveInput.CleanString(deviceId, 256);
+    if (!DefensiveInput.IsSafeToken(did, 256))
+        return Results.BadRequest(new { ok = false, error = "invalid_device_id" });
+
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
+
     cmd.CommandText = @"
         DELETE FROM DeviceTokens
         WHERE DeviceToken = $did
@@ -6224,23 +9003,23 @@ app.MapDelete("/api/me/devices/{deviceId}", (string deviceId, HttpContext ctx) =
     ";
 
     cmd.Parameters.AddWithValue("$u", username);
-    cmd.Parameters.AddWithValue("$did", deviceId);
+    cmd.Parameters.AddWithValue("$did", did);
 
     var deleted = cmd.ExecuteNonQuery();
 
-    AppHelpers.LogActivity(username, "device_delete", $"DeviceId={deviceId}");
+    var didPreview = did.Length > 12 ? did.Substring(0, 12) + "..." : did;
+    AppHelpers.LogActivity(username, "device_delete", "DeviceId=" + didPreview);
 
     return Results.Ok(new { ok = true, deleted });
 });
 
-
 app.MapDelete("/api/account/delete", (HttpContext ctx) =>
 {
-    var username = ctx.User?.Identity?.Name;
-    if (string.IsNullOrWhiteSpace(username))
+    var username = DefensiveInput.CleanString(ctx.User?.Identity?.Name, 32).ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(username) || !DefensiveInput.IsUsername(username))
         return Results.Unauthorized();
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var tx = db.BeginTransaction();
@@ -6266,6 +9045,8 @@ app.MapDelete("/api/account/delete", (HttpContext ctx) =>
 
     tx.Commit();
 
+    ctx.Response.Cookies.Delete("runspace_auth_v3");
+    ctx.Response.Cookies.Delete("runspace_auth_v2");
     ctx.Response.Cookies.Delete("runspace_auth");
     ctx.Response.Cookies.Delete("rs-dt");
 
@@ -6279,7 +9060,7 @@ app.MapGet("/api/settings/privacy", (HttpContext ctx) =>
     if (string.IsNullOrWhiteSpace(username))
         return Results.Unauthorized();
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6304,7 +9085,7 @@ app.MapPost("/api/settings/privacy", async (HttpContext ctx) =>
     if (string.IsNullOrWhiteSpace(body))
         body = "{}";
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6323,7 +9104,7 @@ app.MapGet("/api/settings/notifications", (HttpContext ctx) =>
     if (string.IsNullOrWhiteSpace(username))
         return Results.Unauthorized();
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6346,7 +9127,7 @@ app.MapPost("/api/settings/notifications", async (HttpContext ctx) =>
     var body = await reader.ReadToEndAsync();
     if (string.IsNullOrWhiteSpace(body)) body = "{}";
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6365,7 +9146,7 @@ app.MapGet("/api/settings/appearance", (HttpContext ctx) =>
     if (string.IsNullOrWhiteSpace(username))
         return Results.Unauthorized();
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6388,7 +9169,7 @@ app.MapPost("/api/settings/appearance", async (HttpContext ctx) =>
     var body = await reader.ReadToEndAsync();
     if (string.IsNullOrWhiteSpace(body)) body = "{}";
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6407,7 +9188,7 @@ app.MapGet("/api/settings/developer", (HttpContext ctx) =>
     if (string.IsNullOrWhiteSpace(username))
         return Results.Unauthorized();
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6422,15 +9203,38 @@ app.MapGet("/api/settings/developer", (HttpContext ctx) =>
 
 app.MapPost("/api/settings/developer", async (HttpContext ctx) =>
 {
-    var username = ctx.User?.Identity?.Name;
-    if (string.IsNullOrWhiteSpace(username))
+    // rs-dev-settings-defensive-v1
+    var username = DefensiveInput.CleanString(ctx.User?.Identity?.Name, 32).ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(username) || !DefensiveInput.IsUsername(username))
         return Results.Unauthorized();
 
-    using var reader = new StreamReader(ctx.Request.Body);
-    var body = await reader.ReadToEndAsync();
-    if (string.IsNullOrWhiteSpace(body)) body = "{}";
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(username, "developer_settings", 30, 3600))
+        return Results.Json(new { ok = false, error = "rate_limited" }, statusCode: 429);
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    string body = "{}";
+
+    if (ctx.Request.ContentLength is null || ctx.Request.ContentLength.Value > 0)
+    {
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(ctx.Request.Body);
+
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return Results.BadRequest(new { ok = false, error = "invalid_json" });
+
+            body = JsonSerializer.Serialize(doc.RootElement);
+
+            if (body.Length > 8000)
+                return Results.BadRequest(new { ok = false, error = "settings_too_large" });
+        }
+        catch
+        {
+            return Results.BadRequest(new { ok = false, error = "invalid_json" });
+        }
+    }
+
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6449,7 +9253,7 @@ app.MapGet("/api/developer/tokens", (HttpContext ctx) =>
     if (string.IsNullOrWhiteSpace(username))
         return Results.Unauthorized();
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6483,22 +9287,42 @@ app.MapGet("/api/developer/tokens", (HttpContext ctx) =>
 
 app.MapPost("/api/developer/tokens", async (HttpContext ctx) =>
 {
-    var username = ctx.User?.Identity?.Name;
-    if (string.IsNullOrWhiteSpace(username))
+    // rs-dev-tokens-mini-v1
+    var username = DefensiveInput.CleanString(ctx.User?.Identity?.Name, 32).ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(username) || !DefensiveInput.IsUsername(username))
         return Results.Unauthorized();
 
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(username, "developer_tokens", 20, 3600))
+        return Results.Json(new { ok = false, error = "rate_limited" }, statusCode: 429);
+
+    // rs-dev-tokens-json-defensive-v1
     string name = "API token";
-    try
+
+    if (ctx.Request.ContentLength.GetValueOrDefault() > 0)
     {
-        using var doc = await JsonDocument.ParseAsync(ctx.Request.Body);
-        if (doc.RootElement.TryGetProperty("name", out var n))
+        try
         {
-            var raw = n.GetString();
-            if (!string.IsNullOrWhiteSpace(raw))
-                name = raw.Trim();
+            using var doc = await JsonDocument.ParseAsync(ctx.Request.Body);
+
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return Results.BadRequest(new { ok = false, error = "invalid_json" });
+
+            if (doc.RootElement.TryGetProperty("name", out var n))
+            {
+                if (n.ValueKind != JsonValueKind.String && n.ValueKind != JsonValueKind.Null)
+                    return Results.BadRequest(new { ok = false, error = "invalid_name" });
+
+                var raw = DefensiveInput.CleanString(n.GetString(), 80);
+                if (!string.IsNullOrWhiteSpace(raw))
+                    name = raw;
+            }
+        }
+        catch
+        {
+            return Results.BadRequest(new { ok = false, error = "invalid_json" });
         }
     }
-    catch { }
 
     var bytes = RandomNumberGenerator.GetBytes(32);
     var token = "rs_" + Convert.ToBase64String(bytes)
@@ -6509,7 +9333,7 @@ app.MapPost("/api/developer/tokens", async (HttpContext ctx) =>
     var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
     var preview = token.Substring(0, Math.Min(10, token.Length)) + "…";
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6528,11 +9352,19 @@ app.MapPost("/api/developer/tokens", async (HttpContext ctx) =>
 
 app.MapDelete("/api/developer/tokens/{id:long}", (long id, HttpContext ctx) =>
 {
-    var username = ctx.User?.Identity?.Name;
-    if (string.IsNullOrWhiteSpace(username))
+    // rs-dev-token-delete-mini-v1
+    var username = DefensiveInput.CleanString(ctx.User?.Identity?.Name, 32).ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(username) || !DefensiveInput.IsUsername(username))
         return Results.Unauthorized();
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    if (id <= 0)
+        return Results.BadRequest(new { ok = false, error = "invalid_token_id" });
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(username, "developer_tokens", 20, 3600))
+        return Results.Json(new { ok = false, error = "rate_limited" }, statusCode: 429);
+
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6552,11 +9384,12 @@ app.MapDelete("/api/developer/tokens/{id:long}", (long id, HttpContext ctx) =>
 
 app.MapGet("/api/developer/webhooks", (HttpContext ctx) =>
 {
-    var username = ctx.User?.Identity?.Name;
-    if (string.IsNullOrWhiteSpace(username))
+    // rs-dev-webhooks-get-defensive-v1
+    var username = DefensiveInput.CleanString(ctx.User?.Identity?.Name, 32).ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(username) || !DefensiveInput.IsUsername(username))
         return Results.Unauthorized();
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6589,9 +9422,14 @@ app.MapGet("/api/developer/webhooks", (HttpContext ctx) =>
 
 app.MapPost("/api/developer/webhooks", async (HttpContext ctx) =>
 {
-    var username = ctx.User?.Identity?.Name;
-    if (string.IsNullOrWhiteSpace(username))
+    // rs-dev-webhooks-post-defensive-v1
+    var username = DefensiveInput.CleanString(ctx.User?.Identity?.Name, 32).ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(username) || !DefensiveInput.IsUsername(username))
         return Results.Unauthorized();
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(username, "developer_webhooks", 20, 3600))
+        return Results.Json(new { ok = false, error = "rate_limited" }, statusCode: 429);
 
     string url = "";
     string eventsJson = "[\"message.created\"]";
@@ -6599,19 +9437,46 @@ app.MapPost("/api/developer/webhooks", async (HttpContext ctx) =>
     try
     {
         using var doc = await JsonDocument.ParseAsync(ctx.Request.Body);
+
+        if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            return Results.BadRequest(new { ok = false, error = "invalid_json" });
+
         if (doc.RootElement.TryGetProperty("url", out var u))
-            url = u.GetString()?.Trim() ?? "";
+            url = DefensiveInput.CleanString(u.GetString(), 500);
 
         if (doc.RootElement.TryGetProperty("events", out var e) && e.ValueKind == JsonValueKind.Array)
-            eventsJson = e.GetRawText();
+        {
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "message.created",
+                "message.updated",
+                "message.deleted"
+            };
+
+            var events = new List<string>();
+            foreach (var item in e.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String) continue;
+                var ev = DefensiveInput.CleanString(item.GetString(), 80);
+                if (allowed.Contains(ev) && !events.Contains(ev))
+                    events.Add(ev);
+                if (events.Count >= 10) break;
+            }
+
+            if (events.Count > 0)
+                eventsJson = JsonSerializer.Serialize(events);
+        }
     }
-    catch { }
+    catch
+    {
+        return Results.BadRequest(new { ok = false, error = "invalid_json" });
+    }
 
     if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
         (uri.Scheme != "https" && uri.Scheme != "http"))
         return Results.BadRequest(new { ok = false, error = "invalid_url" });
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6629,11 +9494,19 @@ app.MapPost("/api/developer/webhooks", async (HttpContext ctx) =>
 
 app.MapDelete("/api/developer/webhooks/{id:long}", (long id, HttpContext ctx) =>
 {
-    var username = ctx.User?.Identity?.Name;
-    if (string.IsNullOrWhiteSpace(username))
+    // rs-dev-webhooks-delete-defensive-v1
+    var username = DefensiveInput.CleanString(ctx.User?.Identity?.Name, 32).ToLowerInvariant();
+    if (string.IsNullOrWhiteSpace(username) || !DefensiveInput.IsUsername(username))
         return Results.Unauthorized();
 
-    using var db = new SqliteConnection("Data Source=/root/RunSpace/data/runspace.db");
+    if (id <= 0)
+        return Results.BadRequest(new { ok = false, error = "invalid_webhook_id" });
+
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(username, "developer_webhooks", 20, 3600))
+        return Results.Json(new { ok = false, error = "rate_limited" }, statusCode: 429);
+
+    using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
 
     using var cmd = db.CreateCommand();
@@ -6835,6 +9708,564 @@ BillingEndpoints.Map(app);
 // RunSpace Premium feature access
 PremiumFeatureEndpoints.Map(app);
 
+
+
+
+app.MapPost("/api/contact", async (HttpContext http) =>
+{
+    // rs-contact-defensive-v1
+    // rs-contact-log-sanitize-v1
+    static string CleanLogValue(string? value, int max)
+    {
+        // rs-contact-log-sanitize-fix-v1
+        value = DefensiveInput.CleanString(value ?? "", max);
+        value = new string(value.Where(ch => !char.IsControl(ch)).ToArray());
+        value = value.Trim();
+        return value.Length > max ? value[..max] : value;
+    }
+
+    var rawIp =
+        http.Request.Headers["CF-Connecting-IP"].FirstOrDefault()
+        ?? "";
+
+    rawIp = CleanLogValue(rawIp, 64);
+
+    var remoteIp = http.Connection.RemoteIpAddress?.ToString() ?? "";
+    var ip = System.Net.IPAddress.TryParse(rawIp, out _)
+        ? rawIp
+        : CleanLogValue(remoteIp, 64);
+
+    if (!System.Net.IPAddress.TryParse(ip, out _))
+        ip = "unknown";
+
+    var limiter = http.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(ip, "contact_form", 5, 3600))
+        return Results.Json(new { ok = false, error = "Too many requests." }, statusCode: 429);
+
+    System.Text.Json.JsonElement body;
+
+    try
+    {
+        body = await System.Text.Json.JsonSerializer.DeserializeAsync<System.Text.Json.JsonElement>(http.Request.Body);
+    }
+    catch
+    {
+        return Results.BadRequest(new { ok = false, error = "Invalid JSON request." });
+    }
+
+    if (body.ValueKind != System.Text.Json.JsonValueKind.Object)
+        return Results.BadRequest(new { ok = false, error = "Invalid JSON request." });
+
+    static string Clean(System.Text.Json.JsonElement data, string key, int max)
+    {
+        if (!data.TryGetProperty(key, out var value))
+            return "";
+
+        var raw = value.ValueKind == System.Text.Json.JsonValueKind.String
+            ? value.GetString() ?? ""
+            : value.ToString();
+
+        return DefensiveInput.CleanString(raw, max);
+    }
+
+    var name = Clean(body, "name", 80);
+    var contact = Clean(body, "contact", 120);
+    var topic = Clean(body, "topic", 60);
+    var message = Clean(body, "message", 3000);
+
+    if (string.IsNullOrWhiteSpace(name) ||
+        string.IsNullOrWhiteSpace(contact) ||
+        string.IsNullOrWhiteSpace(topic) ||
+        string.IsNullOrWhiteSpace(message))
+    {
+        return Results.BadRequest(new { ok = false, error = "Missing required fields." });
+    }
+
+    Directory.CreateDirectory("/var/lib/runspace");
+    var path = "/var/lib/runspace/contact_messages.jsonl";
+
+    var row = new
+    {
+        created_at = DateTimeOffset.UtcNow.ToString("O"),
+        ip,
+        user_agent = CleanLogValue(http.Request.Headers.UserAgent.ToString(), 512),
+        name,
+        contact,
+        topic,
+        message
+    };
+
+    await System.IO.File.AppendAllTextAsync(
+        path,
+        System.Text.Json.JsonSerializer.Serialize(row) + Environment.NewLine
+    );
+
+    return Results.Ok(new { ok = true });
+});
+
+
+
+// ======================================================
+// RunSpace Devices API
+// Used by RunSpace QT Linux Settings → Devices
+// ======================================================
+
+static async Task<long?> RsGetCurrentUserIdAsync(HttpContext ctx)
+{
+    if (ctx.User?.Identity?.IsAuthenticated != true)
+        return null;
+
+    var username =
+        ctx.User.Identity?.Name ??
+        ctx.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value ??
+        ctx.User.FindFirst("username")?.Value ??
+        "";
+
+    if (string.IsNullOrWhiteSpace(username))
+        return null;
+
+    await using var db = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
+    await db.OpenAsync();
+
+    await using var cmd = db.CreateCommand();
+    cmd.CommandText = "SELECT Id FROM AuthUsers WHERE LOWER(Username)=LOWER($u) LIMIT 1;";
+    cmd.Parameters.AddWithValue("$u", username);
+
+    var result = await cmd.ExecuteScalarAsync();
+    if (result == null || result == DBNull.Value)
+        return null;
+
+    if (long.TryParse(result.ToString(), out var userId))
+        return userId;
+
+    return null;
+}
+
+static string RsIpPrefix(HttpContext ctx)
+{
+    // rs-ip-prefix-defensive-v1
+    var rawCfIp = DefensiveInput.CleanString(ctx.Request.Headers["CF-Connecting-IP"].FirstOrDefault() ?? "", 64);
+    var remoteIp = DefensiveInput.CleanString(ctx.Connection.RemoteIpAddress?.ToString() ?? "", 64);
+
+    var ip = System.Net.IPAddress.TryParse(rawCfIp, out _)
+        ? rawCfIp
+        : remoteIp;
+
+    if (!System.Net.IPAddress.TryParse(ip, out _))
+        return "";
+
+    if (ip.Contains('.'))
+    {
+        var parts = ip.Split('.');
+        if (parts.Length >= 3)
+            return $"{parts[0]}.{parts[1]}.{parts[2]}.x";
+    }
+
+    if (ip.Contains(':'))
+    {
+        var parts = ip.Split(':', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 4)
+            return string.Join(":", parts.Take(4)) + "::";
+    }
+
+    return "";
+}
+
+static string RsGuessLocation(HttpContext ctx)
+{
+    var country = ctx.Request.Headers["CF-IPCountry"].FirstOrDefault();
+
+    if (!string.IsNullOrWhiteSpace(country) && country != "XX")
+        return country;
+
+    return "Unknown";
+}
+
+app.MapGet("/api/devices/trusted", async (HttpContext ctx) =>
+{
+    var userId = await RsGetCurrentUserIdAsync(ctx);
+
+    if (userId == null)
+        return Results.Json(new { success = false, error = "Not authenticated" }, statusCode: 401);
+
+    await using var db = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
+    await db.OpenAsync();
+
+    await using (var create = db.CreateCommand())
+    {
+        create.CommandText = """
+        CREATE TABLE IF NOT EXISTS TrustedDevices (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            UserId INTEGER NOT NULL,
+            DeviceId TEXT NOT NULL,
+            DeviceName TEXT NOT NULL,
+            Platform TEXT NOT NULL DEFAULT '',
+            Location TEXT NOT NULL DEFAULT '',
+            IpPrefix TEXT NOT NULL DEFAULT '',
+            UserAgent TEXT NOT NULL DEFAULT '',
+            FirstSeenAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            LastSeenAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            IsTrusted INTEGER NOT NULL DEFAULT 1,
+            IsCurrent INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(UserId, DeviceId)
+        );
+
+        CREATE INDEX IF NOT EXISTS IX_TrustedDevices_UserId
+        ON TrustedDevices(UserId);
+        """;
+
+        await create.ExecuteNonQueryAsync();
+    }
+
+    // rs-devices-trusted-defensive-v1
+    var rawDeviceId = ctx.Request.Headers["X-RunSpace-Device-Id"].ToString();
+
+    if (string.IsNullOrWhiteSpace(rawDeviceId))
+        rawDeviceId = ctx.Request.Cookies["rs-dt"] ?? "";
+
+    var deviceId = DefensiveInput.CleanString(rawDeviceId, 100);
+    if (!DefensiveInput.IsSafeDeviceId(deviceId))
+        deviceId = "unknown-device";
+
+    var deviceName = DefensiveInput.CleanString(ctx.Request.Headers["X-RunSpace-Device-Name"].ToString(), 80);
+    if (string.IsNullOrWhiteSpace(deviceName))
+        deviceName = "RunSpace QT Linux";
+
+    var userAgent = DefensiveInput.CleanString(ctx.Request.Headers.UserAgent.ToString(), 512);
+    var ipPrefix = RsIpPrefix(ctx);
+    var location = RsGuessLocation(ctx);
+    var now = DateTime.UtcNow.ToString("O");
+
+    await using (var clearCurrent = db.CreateCommand())
+    {
+        clearCurrent.CommandText = """
+        UPDATE TrustedDevices
+        SET IsCurrent = 0
+        WHERE UserId = $uid;
+        """;
+        clearCurrent.Parameters.AddWithValue("$uid", userId.Value);
+        await clearCurrent.ExecuteNonQueryAsync();
+    }
+
+    await using (var upsert = db.CreateCommand())
+    {
+        upsert.CommandText = """
+        INSERT INTO TrustedDevices
+            (UserId, DeviceId, DeviceName, Platform, Location, IpPrefix, UserAgent, LastSeenAt, IsTrusted, IsCurrent)
+        VALUES
+            ($uid, $deviceId, $deviceName, $platform, $location, $ipPrefix, $userAgent, $lastSeen, 1, 1)
+        ON CONFLICT(UserId, DeviceId) DO UPDATE SET
+            DeviceName = excluded.DeviceName,
+            Platform = excluded.Platform,
+            Location = excluded.Location,
+            IpPrefix = excluded.IpPrefix,
+            UserAgent = excluded.UserAgent,
+            LastSeenAt = excluded.LastSeenAt,
+            IsTrusted = 1,
+            IsCurrent = 1;
+        """;
+
+        upsert.Parameters.AddWithValue("$uid", userId.Value);
+        upsert.Parameters.AddWithValue("$deviceId", deviceId);
+        upsert.Parameters.AddWithValue("$deviceName", deviceName);
+        upsert.Parameters.AddWithValue("$platform", "Linux");
+        upsert.Parameters.AddWithValue("$location", location);
+        upsert.Parameters.AddWithValue("$ipPrefix", ipPrefix);
+        upsert.Parameters.AddWithValue("$userAgent", userAgent);
+        upsert.Parameters.AddWithValue("$lastSeen", now);
+
+        await upsert.ExecuteNonQueryAsync();
+    }
+
+    var devices = new List<object>();
+
+    await using (var list = db.CreateCommand())
+    {
+        list.CommandText = """
+        SELECT DeviceId, DeviceName, Platform, Location, IpPrefix, LastSeenAt, IsTrusted, IsCurrent
+        FROM TrustedDevices
+        WHERE UserId = $uid AND IsTrusted = 1
+        ORDER BY IsCurrent DESC, LastSeenAt DESC;
+        """;
+        list.Parameters.AddWithValue("$uid", userId.Value);
+
+        await using var reader = await list.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+        {
+            devices.Add(new
+            {
+                deviceId = reader.GetString(0),
+                deviceName = reader.GetString(1),
+                platform = reader.GetString(2),
+                location = reader.GetString(3),
+                ipPrefix = reader.GetString(4),
+                lastSeenUtc = reader.GetString(5),
+                isTrusted = reader.GetInt32(6) == 1,
+                isCurrent = reader.GetInt32(7) == 1
+            });
+        }
+    }
+
+    return Results.Json(new
+    {
+        success = true,
+        currentDevice = deviceId,
+        keyValidUntil = DateTime.UtcNow.AddDays(30).ToString("yyyy-MM-dd"),
+        devices
+    });
+});
+
+
+app.MapPost("/api/devices/revoke", async (HttpContext ctx) =>
+{
+    var userId = await RsGetCurrentUserIdAsync(ctx);
+
+    if (userId == null)
+        return Results.Json(new { success = false, error = "Not authenticated" }, statusCode: 401);
+
+    // rs-devices-revoke-defensive-v1
+    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
+    if (!limiter.IsAllowed(userId.Value.ToString(), "devices_revoke", 30, 900))
+        return Results.Json(new { success = false, error = "Rate limit." }, statusCode: 429);
+
+    JsonElement root;
+    try
+    {
+        root = await ctx.Request.ReadFromJsonAsync<JsonElement>();
+    }
+    catch
+    {
+        return Results.BadRequest(new { success = false, error = "Invalid request" });
+    }
+
+    if (root.ValueKind != JsonValueKind.Object ||
+        !root.TryGetProperty("deviceId", out var deviceIdElement) ||
+        deviceIdElement.ValueKind != JsonValueKind.String)
+        return Results.BadRequest(new { success = false, error = "Missing deviceId" });
+
+    var deviceId = DefensiveInput.CleanString(deviceIdElement.GetString(), 100);
+
+    if (!DefensiveInput.IsSafeDeviceId(deviceId))
+        return Results.BadRequest(new { success = false, error = "Invalid deviceId" });
+
+    var currentDevice = DefensiveInput.CleanString(ctx.Request.Headers["X-RunSpace-Device-Id"].ToString(), 100);
+
+    if (DefensiveInput.IsSafeDeviceId(currentDevice) && currentDevice == deviceId)
+        return Results.BadRequest(new { success = false, error = "Cannot revoke current device" });
+
+    await using var db = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
+    await db.OpenAsync();
+
+    await using var cmd = db.CreateCommand();
+    cmd.CommandText = """
+    UPDATE TrustedDevices
+    SET IsTrusted = 0
+    WHERE UserId = $uid AND DeviceId = $deviceId;
+    """;
+    cmd.Parameters.AddWithValue("$uid", userId.Value);
+    cmd.Parameters.AddWithValue("$deviceId", deviceId);
+
+    var rows = await cmd.ExecuteNonQueryAsync();
+
+    return Results.Json(new
+    {
+        success = true,
+        revoked = rows > 0,
+        deviceId
+    });
+});
+
+app.MapPost("/api/devices/rotate-keys", async (HttpContext ctx) =>
+{
+    var userId = await RsGetCurrentUserIdAsync(ctx);
+
+    if (userId == null)
+        return Results.Json(new { success = false, error = "Not authenticated" }, statusCode: 401);
+
+    return Results.Json(new
+    {
+        success = true,
+        message = "Key rotation requested",
+        keyValidUntil = DateTime.UtcNow.AddDays(30).ToString("yyyy-MM-dd")
+    });
+});
+
+
+
+
+// ======================================================
+// RunSpace Account Login History API
+// Used by RunSpace QT Linux Settings → Account
+// ======================================================
+
+app.MapGet("/api/account/login-history", async (HttpContext ctx) =>
+{
+    var userId = await RsGetCurrentUserIdAsync(ctx);
+
+    if (userId == null)
+        return Results.Json(new { success = false, error = "Not authenticated" }, statusCode: 401);
+
+    await using var db = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
+    await db.OpenAsync();
+
+    async Task<bool> TableExists(string tableName)
+    {
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name=$name;";
+        cmd.Parameters.AddWithValue("$name", tableName);
+        var result = await cmd.ExecuteScalarAsync();
+        return Convert.ToInt64(result ?? 0) > 0;
+    }
+
+    var entries = new List<object>();
+
+    if (await TableExists("DeviceTokens"))
+    {
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = """
+        SELECT
+            DeviceToken,
+            COALESCE(DeviceName, ''),
+            COALESCE(UserAgent, ''),
+            COALESCE(IpPrefix, ''),
+            COALESCE(FirstSeenAt, ''),
+            COALESCE(LastSeenAt, ''),
+            COALESCE(IsTrusted, 0),
+            COALESCE(SessionCount, 0)
+        FROM DeviceTokens
+        WHERE UserId = $uid
+        ORDER BY LastSeenAt DESC
+        LIMIT 12;
+        """;
+        cmd.Parameters.AddWithValue("$uid", userId.Value);
+
+        try
+        {
+            await using var r = await cmd.ExecuteReaderAsync();
+
+            while (await r.ReadAsync())
+            {
+                var token = r.GetString(0);
+                var deviceName = r.GetString(1);
+                var userAgent = r.GetString(2);
+                var ipPrefix = r.GetString(3);
+                var firstSeen = r.GetString(4);
+                var lastSeen = r.GetString(5);
+                var trusted = r.GetInt32(6) == 1;
+                var sessionCount = r.GetInt32(7);
+
+                entries.Add(new
+                {
+                    timestamp = string.IsNullOrWhiteSpace(lastSeen) ? firstSeen : lastSeen,
+                    deviceName = string.IsNullOrWhiteSpace(deviceName) ? "Unknown device" : deviceName,
+                    userAgent,
+                    ipPrefix,
+                    location = "Unknown",
+                    status = trusted ? "Trusted" : "Seen",
+                    riskScore = 0,
+                    sessionCount,
+                    deviceId = token
+                });
+            }
+        }
+        catch
+        {
+            // Older DB schema may differ. Fallback below handles it.
+        }
+    }
+
+    if (entries.Count == 0 && await TableExists("TrustedDevices"))
+    {
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = """
+        SELECT
+            DeviceId,
+            COALESCE(DeviceName, ''),
+            COALESCE(Platform, ''),
+            COALESCE(Location, ''),
+            COALESCE(IpPrefix, ''),
+            COALESCE(FirstSeenAt, ''),
+            COALESCE(LastSeenAt, ''),
+            COALESCE(IsCurrent, 0)
+        FROM TrustedDevices
+        WHERE UserId = $uid AND IsTrusted = 1
+        ORDER BY LastSeenAt DESC
+        LIMIT 12;
+        """;
+        cmd.Parameters.AddWithValue("$uid", userId.Value);
+
+        try
+        {
+            await using var r = await cmd.ExecuteReaderAsync();
+
+            while (await r.ReadAsync())
+            {
+                var deviceId = r.GetString(0);
+                var deviceName = r.GetString(1);
+                var platform = r.GetString(2);
+                var location = r.GetString(3);
+                var ipPrefix = r.GetString(4);
+                var firstSeen = r.GetString(5);
+                var lastSeen = r.GetString(6);
+                var isCurrent = r.GetInt32(7) == 1;
+
+                entries.Add(new
+                {
+                    timestamp = string.IsNullOrWhiteSpace(lastSeen) ? firstSeen : lastSeen,
+                    deviceName = string.IsNullOrWhiteSpace(deviceName) ? "RunSpace device" : deviceName,
+                    platform,
+                    location,
+                    ipPrefix,
+                    status = isCurrent ? "Active" : "Trusted",
+                    riskScore = 0,
+                    deviceId
+                });
+            }
+        }
+        catch
+        {
+            // Ignore and use fallback below.
+        }
+    }
+
+    if (entries.Count == 0)
+    {
+        // rs-account-devices-fallback-defensive-v1
+        var rawDeviceId = ctx.Request.Headers["X-RunSpace-Device-Id"].ToString();
+
+        if (string.IsNullOrWhiteSpace(rawDeviceId))
+            rawDeviceId = ctx.Request.Cookies["rs-dt"] ?? "";
+
+        var deviceId = DefensiveInput.CleanString(rawDeviceId, 100);
+        if (!DefensiveInput.IsSafeDeviceId(deviceId))
+            deviceId = "current-session";
+
+        var deviceName = DefensiveInput.CleanString(ctx.Request.Headers["X-RunSpace-Device-Name"].ToString(), 80);
+
+        if (string.IsNullOrWhiteSpace(deviceName))
+            deviceName = "RunSpace QT Linux";
+
+        entries.Add(new
+        {
+            timestamp = DateTime.UtcNow.ToString("O"),
+            deviceName,
+            location = "Current session",
+            ipPrefix = "",
+            status = "Active",
+            riskScore = 0,
+            deviceId
+        });
+    }
+
+    return Results.Json(new
+    {
+        success = true,
+        loginHistory = entries
+    });
+});
+
+
 app.Run();
 
 // ═══════════════════════════════════════════════
@@ -6854,13 +10285,13 @@ public record SetTrustReq(string? Level, int? Score);
 public static class AppConfig
 {
     public const string AdminUsername = "mx403";
-    public const string DataDir = "/root/RunSpace/data";
-    public const string DbPath = "/root/RunSpace/data/runspace.db";
-    public const string ConnectionString = "Data Source=/root/RunSpace/data/runspace.db";
-    public const string UploadsDir = "/root/RunSpace/data/uploads";
-    public const string AvatarUploadDir = "/root/RunSpace/data/uploads/avatars";
-    public const string ChatUploadDir = "/root/RunSpace/data/uploads/chat";
-    public const string MarketDir = "/root/RunSpace/data/market";
+    public const string DataDir = "/var/lib/runspace/data";
+    public const string DbPath = "/var/lib/runspace/runspace.db";
+    public const string ConnectionString = "Data Source=/var/lib/runspace/runspace.db";
+    public const string UploadsDir = "/var/lib/runspace/data/uploads";
+    public const string AvatarUploadDir = "/var/lib/runspace/data/uploads/avatars";
+    public const string ChatUploadDir = "/var/lib/runspace/data/uploads/chat";
+    public const string MarketDir = "/var/lib/runspace/data/market";
     public const int MaxCipherPayloadLength = 50000;
     public static string PasswordPepper => Environment.GetEnvironmentVariable("RUNSPACE_PEPPER") ?? "RS_DEFAULT_PEPPER_CHANGE_ME_IN_PROD";
     public static string[] AllowedOrigins => (Environment.GetEnvironmentVariable("RUNSPACE_ORIGINS") ?? "https://runspace.cloud").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -6903,15 +10334,33 @@ public class NameUserIdProvider : IUserIdProvider { public string? GetUserId(Hub
 public class ChatHub : Hub
 {
     // DM
-    public async Task JoinPrivate(string otherUser) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); var target = (otherUser ?? "").Trim().ToLowerInvariant(); var _r = string.IsNullOrWhiteSpace(me) ? "me_null" : !AppHelpers.UserExists(me) ? "me_notfound" : string.IsNullOrWhiteSpace(target) ? "target_empty" : target == me ? "self" : !AppHelpers.UserExists(target) ? "target_notfound" : ""; if (!string.IsNullOrWhiteSpace(_r)) throw new HubException("Ogiltigt:" + _r); await Groups.AddToGroupAsync(Context.ConnectionId, ChatHelpers.BuildGroupName(me, target)); }
+    public async Task JoinPrivate(string otherUser)
+    {
+        var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant() ?? "";
+        var target = (otherUser ?? "").Trim().ToLowerInvariant();
+
+        var reason =
+            string.IsNullOrWhiteSpace(me) ? "me_null" :
+            !AppHelpers.UserExists(me) ? "me_notfound" :
+            string.IsNullOrWhiteSpace(target) ? "target_empty" :
+            target == me ? "self" :
+            !AppHelpers.UserExists(target) ? "target_notfound" :
+            "";
+
+        if (!string.IsNullOrWhiteSpace(reason))
+            throw new HubException("Ogiltigt:" + reason);
+
+        await Groups.AddToGroupAsync(Context.ConnectionId, ChatHelpers.BuildGroupName(me, target));
+    }
     public async Task LeavePrivate(string otherUser) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); var target = (otherUser ?? "").Trim().ToLowerInvariant(); if (!string.IsNullOrWhiteSpace(me) && !string.IsNullOrWhiteSpace(target)) await Groups.RemoveFromGroupAsync(Context.ConnectionId, ChatHelpers.BuildGroupName(me, target)); }
     public async Task SendMessage(ChatMessageReq req) { var from = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (string.IsNullOrWhiteSpace(from) || !AppHelpers.UserExists(from)) throw new HubException("Inte inloggad.");
-        // AI-intercept
         var toCheck = (req.To ?? "").Trim().ToLowerInvariant();
-        if (toCheck == "runspacegpt") { await HandleAiMessage(from, req); return; }
         // --- TRUST + FIREWALL + RATE LIMIT ENFORCEMENT ---
         var _ip = Context.GetHttpContext()?.Connection.RemoteIpAddress?.ToString() ?? "";
-        var _deviceToken = Context.GetHttpContext()?.Request.Headers["X-Device-Token"].FirstOrDefault() ?? "";
+        // rs-signalr-sendmessage-device-token-defensive-v1
+        var _deviceToken = DefensiveInput.CleanString(Context.GetHttpContext()?.Request.Headers["X-Device-Token"].FirstOrDefault() ?? "", 256);
+        if (!DefensiveInput.IsSafeToken(_deviceToken))
+            _deviceToken = "";
         var _msgText = req.Text ?? "";
         // 1. Load trust level from DB
         string _trustLevel = "medium";
@@ -6935,6 +10384,24 @@ public class ChatHub : Hub
             _evc.ExecuteNonQuery();
             throw new HubException("Din session är blockerad.");
         }
+        // 2b. Enforce active cooldown before counting a new message.
+        using (var _coolDb = DbHelpers.OpenDb()) {
+            using var _cool = _coolDb.CreateCommand();
+            _cool.CommandText = @"
+                SELECT ce.CooldownUntil
+                FROM CooldownEscalations ce
+                JOIN AuthUsers au ON au.Id = ce.UserId
+                WHERE au.Username=$u
+                  AND ce.ActionType='message'
+                  AND ce.CooldownUntil > datetime('now')
+                LIMIT 1";
+            _cool.Parameters.AddWithValue("$u", from);
+            var _coolUntil = _cool.ExecuteScalar();
+            if (_coolUntil != null) {
+                throw new HubException("För många meddelanden. Vänta lite.");
+            }
+        }
+
         // 3. Rate limit (per 60s window)
         int _rateLimit = _trustLevel == "high" ? 60 : _trustLevel == "medium" ? 30 : 15;
         var _window = (DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 60) * 60;
@@ -7115,60 +10582,6 @@ public class ChatHub : Hub
         }
         // --- END ENFORCEMENT ---
         var v = ChatHelpers.ValidateOutgoingMessage(req, from); if (!v.Ok) throw new HubException(v.Message); var ts = DateTime.UtcNow.ToString("o"); long id; using (var db = DbHelpers.OpenDb()) { using var cmd = db.CreateCommand(); cmd.CommandText = @"INSERT INTO ChatMessages (FromUser,ToUser,Message,Timestamp,Encrypted,Iv,Algorithm,EncryptedKey,SenderEncryptedKey,RecipientKeysJson,SenderKeysJson,ReplyToId) VALUES ($from,$to,$msg,$ts,$enc,$iv,$alg,$ek,$sek,$rk,$sk,$rid); SELECT last_insert_rowid();"; cmd.Parameters.AddWithValue("$from", from); cmd.Parameters.AddWithValue("$to", v.ToUser); cmd.Parameters.AddWithValue("$msg", v.CipherText); cmd.Parameters.AddWithValue("$ts", ts); cmd.Parameters.AddWithValue("$enc", v.Encrypted ? 1 : 0); cmd.Parameters.AddWithValue("$iv", v.Iv); cmd.Parameters.AddWithValue("$alg", v.Algorithm); cmd.Parameters.AddWithValue("$ek", v.EncryptedKey); cmd.Parameters.AddWithValue("$sek", v.SenderEncryptedKey); cmd.Parameters.AddWithValue("$rk", v.RecipientKeysJson); cmd.Parameters.AddWithValue("$sk", v.SenderKeysJson); cmd.Parameters.AddWithValue("$rid", req.ReplyToId ?? 0); id = (long)(cmd.ExecuteScalar() ?? 0L); } var payload = ChatHelpers.BuildPayload(id, from, v.ToUser, v.CipherText, ts, v.Encrypted, v.Iv, v.Algorithm, v.EncryptedKey, v.SenderEncryptedKey, v.RecipientKeysJson, v.SenderKeysJson, req.ReplyToId ?? 0); await Clients.User(v.ToUser).SendAsync("ReceiveMessage", payload); if (v.ToUser == from) await Clients.User(from).SendAsync("ReceiveMessage", payload); }
-    private async Task HandleAiMessage(string from, ChatMessageReq req) {
-        var userText = (req.Text ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(userText)) return;
-        var ts = DateTime.UtcNow.ToString("o");
-        long userMsgId;
-        using (var db = DbHelpers.OpenDb()) {
-            using var cmd = db.CreateCommand();
-            cmd.CommandText = "INSERT INTO ChatMessages (FromUser,ToUser,Message,Timestamp,Encrypted,Iv,Algorithm,EncryptedKey,SenderEncryptedKey,RecipientKeysJson,SenderKeysJson,ReplyToId) VALUES ($from,'runspacegpt',$msg,$ts,0,'','plain','','','[]','[]',0); SELECT last_insert_rowid();";
-            cmd.Parameters.AddWithValue("$from", from);
-            cmd.Parameters.AddWithValue("$msg", userText);
-            cmd.Parameters.AddWithValue("$ts", ts);
-            userMsgId = (long)(cmd.ExecuteScalar() ?? 0L);
-        }
-        var userPayload = ChatHelpers.BuildPayload(userMsgId, from, "runspacegpt", userText, ts, false, "", "plain", "", "", "[]", "[]", 0);
-        await Clients.User(from).SendAsync("ReceiveMessage", userPayload);
-
-        // Hämta konversationshistorik
-        var history = new List<object> { new { role = "system", content = "You are RunspaceGPT, an AI assistant built into the Runspace chat platform. Always respond in the same language the user writes in. Be helpful, friendly, and concise." } };
-        using (var db = DbHelpers.OpenDb()) {
-            using var cmd = db.CreateCommand();
-            cmd.CommandText = "SELECT FromUser, Message FROM ChatMessages WHERE (FromUser=$u AND ToUser='runspacegpt') OR (FromUser='runspacegpt' AND ToUser=$u) ORDER BY Id DESC LIMIT 20";
-            cmd.Parameters.AddWithValue("$u", from);
-            using var r = cmd.ExecuteReader();
-            var rows = new List<(string f, string m)>();
-            while (r.Read()) rows.Add((r.GetString(0), r.GetString(1)));
-            rows.Reverse();
-            foreach (var row in rows) history.Add(new { role = row.f == "runspacegpt" ? "assistant" : "user", content = row.m });
-        }
-
-        try {
-            var apiKey = (Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? "").Trim().Trim('"');
-            using var http = new System.Net.Http.HttpClient();
-            http.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-            var body = System.Text.Json.JsonSerializer.Serialize(new { model = "gpt-4o-mini", messages = history, max_tokens = 1024 });
-            var response = await http.PostAsync("https://api.openai.com/v1/chat/completions", new System.Net.Http.StringContent(body, System.Text.Encoding.UTF8, "application/json"));
-            var json = await response.Content.ReadAsStringAsync();
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            var reply = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString() ?? "Kunde inte svara.";
-            var aiTs = DateTime.UtcNow.ToString("o");
-            long aiMsgId;
-            using (var db = DbHelpers.OpenDb()) {
-                using var cmd = db.CreateCommand();
-                cmd.CommandText = "INSERT INTO ChatMessages (FromUser,ToUser,Message,Timestamp,Encrypted,Iv,Algorithm,EncryptedKey,SenderEncryptedKey,RecipientKeysJson,SenderKeysJson,ReplyToId) VALUES ('runspacegpt',$to,$msg,$ts,0,'','plain','','','[]','[]',0); SELECT last_insert_rowid();";
-                cmd.Parameters.AddWithValue("$to", from);
-                cmd.Parameters.AddWithValue("$msg", reply);
-                cmd.Parameters.AddWithValue("$ts", aiTs);
-                aiMsgId = (long)(cmd.ExecuteScalar() ?? 0L);
-            }
-            var aiPayload = ChatHelpers.BuildPayload(aiMsgId, "runspacegpt", from, reply, aiTs, false, "", "plain", "", "", "[]", "[]", 0);
-            await Clients.User(from).SendAsync("ReceiveMessage", aiPayload);
-        } catch {
-            await Clients.User(from).SendAsync("ReceiveMessage", ChatHelpers.BuildPayload(0, "runspacegpt", from, "Something went wrong, please try again.", DateTime.UtcNow.ToString("o"), false, "", "plain", "", "", "[]", "[]", 0));
-        }
-    }
     public async Task SendTyping(string toUser) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (!string.IsNullOrWhiteSpace(me) && !string.IsNullOrWhiteSpace(toUser)) await Clients.User(toUser.Trim().ToLowerInvariant()).SendAsync("ReceiveTyping", me); }
     public async Task SendReaction(string peer, string messageId, string emoji) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (!string.IsNullOrWhiteSpace(me) && !string.IsNullOrWhiteSpace(peer) && !string.IsNullOrWhiteSpace(messageId) && !string.IsNullOrWhiteSpace(emoji)) { await Clients.User(peer.Trim().ToLowerInvariant()).SendAsync("ReceiveReaction", messageId, emoji, me); await Clients.User(me).SendAsync("ReceiveReaction", messageId, emoji, me); } }
 
@@ -7265,9 +10678,137 @@ public static class TotpHelper
         {
         }
     }
+
+    public static bool VerifyAndUseBackupCode(string u, string code)
+    {
+        if (string.IsNullOrWhiteSpace(u) || string.IsNullOrWhiteSpace(code))
+            return false;
+
+        var normalized = code.Trim().Replace(" ", "").ToUpperInvariant();
+
+        if (!System.Text.RegularExpressions.Regex.IsMatch(normalized, "^[0-9A-F]{8}$"))
+            return false;
+
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
+
+        try
+        {
+            using var db = DbHelpers.OpenDb();
+            using var tx = db.BeginTransaction();
+
+            long id = 0;
+
+            using (var find = db.CreateCommand())
+            {
+                find.Transaction = tx;
+                find.CommandText = @"
+                    SELECT Id
+                    FROM BackupCodes
+                    WHERE LOWER(Username)=LOWER($u)
+                      AND CodeHash=$h
+                      AND Used=0
+                    LIMIT 1";
+                find.Parameters.AddWithValue("$u", u);
+                find.Parameters.AddWithValue("$h", hash);
+
+                var obj = find.ExecuteScalar();
+                if (obj == null || obj == DBNull.Value)
+                {
+                    tx.Rollback();
+                    return false;
+                }
+
+                id = Convert.ToInt64(obj);
+            }
+
+            using (var mark = db.CreateCommand())
+            {
+                mark.Transaction = tx;
+                mark.CommandText = "UPDATE BackupCodes SET Used=1 WHERE Id=$id AND Used=0";
+                mark.Parameters.AddWithValue("$id", id);
+
+                if (mark.ExecuteNonQuery() <= 0)
+                {
+                    tx.Rollback();
+                    return false;
+                }
+            }
+
+            tx.Commit();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
 
-public static class LoginHistory { public static void Record(string u, string ip, string ua, string fp, bool ok) { try { using var db = DbHelpers.OpenDb(); using var c = db.CreateCommand(); c.CommandText = "INSERT INTO LoginHistory (Username,UserAgent,DeviceFingerprint,Success,Timestamp) VALUES ($u,$ua,$fp,$s,$ts)"; c.Parameters.AddWithValue("$u", u); c.Parameters.AddWithValue("$ip", ip); c.Parameters.AddWithValue("$ua", (ua ?? "").Length > 300 ? ua![..300] : ua ?? ""); c.Parameters.AddWithValue("$fp", (fp ?? "").Length > 200 ? fp![..200] : fp ?? ""); c.Parameters.AddWithValue("$s", ok ? 1 : 0); c.Parameters.AddWithValue("$ts", DateTime.UtcNow.ToString("o")); c.ExecuteNonQuery(); } catch { } } public static List<object> GetForUser(string u) { var rows = new List<object>(); try { using var db = DbHelpers.OpenDb(); using var c = db.CreateCommand(); c.CommandText = "SELECT UserAgent,Success,Timestamp FROM LoginHistory WHERE Username=$u ORDER BY Id DESC LIMIT 50"; c.Parameters.AddWithValue("$u", u); using var r = c.ExecuteReader(); while (r.Read()) rows.Add(new { ip = "", userAgent = r.IsDBNull(1) ? "" : r.GetString(1), success = !r.IsDBNull(2) && r.GetInt32(2) == 1, timestamp = r.IsDBNull(3) ? "" : r.GetString(3) }); } catch { } return rows; } }
+public static class LoginHistory
+{
+    public static void Record(string u, string ip, string ua, string fp, bool ok)
+    {
+        try
+        {
+            using var db = DbHelpers.OpenDb();
+            using var c = db.CreateCommand();
+
+            c.CommandText = "INSERT INTO LoginHistory (Username,UserAgent,DeviceFingerprint,Success,Timestamp) VALUES ($u,$ua,$fp,$s,$ts)";
+            c.Parameters.AddWithValue("$u", DefensiveInput.CleanString(u, 32));
+            c.Parameters.AddWithValue("$ua", DefensiveInput.CleanString(ua, 300));
+            c.Parameters.AddWithValue("$fp", DefensiveInput.CleanString(fp, 200));
+            c.Parameters.AddWithValue("$s", ok ? 1 : 0);
+            c.Parameters.AddWithValue("$ts", DateTime.UtcNow.ToString("o"));
+
+            c.ExecuteNonQuery();
+        }
+        catch { }
+    }
+
+    public static List<object> GetForUser(string u)
+    {
+        // rs-login-history-from-activitylog-v1
+        var rows = new List<object>();
+
+        try
+        {
+            var username = DefensiveInput.CleanString(u, 32).ToLowerInvariant();
+            if (!DefensiveInput.IsUsername(username))
+                return rows;
+
+            using var db = DbHelpers.OpenDb();
+            using var c = db.CreateCommand();
+
+            c.CommandText = @"
+                SELECT Action, Details, Timestamp
+                FROM ActivityLog
+                WHERE LOWER(Username)=LOWER($u)
+                  AND Action IN (
+                    'login_with_key',
+                    'register_with_key'
+                  )
+                ORDER BY Timestamp DESC
+                LIMIT 50";
+            c.Parameters.AddWithValue("$u", username);
+
+            using var r = c.ExecuteReader();
+            while (r.Read())
+            {
+                rows.Add(new
+                {
+                    action = r.IsDBNull(0) ? "security_event" : DefensiveInput.CleanString(r.GetString(0), 80),
+                    details = r.IsDBNull(1) ? "" : DefensiveInput.CleanString(r.GetString(1), 300),
+                    timestamp = r.IsDBNull(2) ? "" : DefensiveInput.CleanString(r.GetString(2), 64),
+                    success = true
+                });
+            }
+        }
+        catch { }
+
+        return rows;
+    }
+}
+
 public static class PasswordHistory { public static void Save(string u, string h) { try { using var db = DbHelpers.OpenDb(); using var c = db.CreateCommand(); c.CommandText = "INSERT INTO PasswordHistory (Username,PasswordHash,CreatedAt) VALUES ($u,$h,$t)"; c.Parameters.AddWithValue("$u", u); c.Parameters.AddWithValue("$h", h); c.Parameters.AddWithValue("$t", DateTime.UtcNow.ToString("o")); c.ExecuteNonQuery(); } catch { } } public static bool WasUsedBefore(string u, string pw) { try { using var db = DbHelpers.OpenDb(); using var c = db.CreateCommand(); c.CommandText = "SELECT PasswordHash FROM PasswordHistory WHERE Username=$u ORDER BY Id DESC LIMIT 10"; c.Parameters.AddWithValue("$u", u); using var r = c.ExecuteReader(); while (r.Read()) { var h = r.IsDBNull(0) ? "" : r.GetString(0); if (!string.IsNullOrWhiteSpace(h) && BCrypt.Net.BCrypt.Verify(pw, h)) return true; } } catch { } return false; } }
 
 public static class MarketHelpers
@@ -7285,7 +10826,7 @@ public static class MarketHelpers
         var authUser = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
         if (!string.IsNullOrWhiteSpace(authUser) && AppHelpers.UserExists(authUser))
         {
-            using var db = new SqliteConnection($"Data Source=/root/RunSpace/data/runspace.db");
+            using var db = new SqliteConnection($"Data Source=/var/lib/runspace/runspace.db");
             db.Open();
             using var cmd = db.CreateCommand();
             cmd.CommandText = @"SELECT mu.Id, mu.Username FROM MarketUsers mu
@@ -7429,8 +10970,8 @@ public static class ChatHelpers
 {
     public static string BuildGroupName(string a, string b) { var p = new[] { a.Trim().ToLowerInvariant(), b.Trim().ToLowerInvariant() }; Array.Sort(p, StringComparer.Ordinal); return $"private:{p[0]}:{p[1]}"; }
     public static OutgoingValidationResult ValidateOutgoingMessage(ChatMessageReq req, string from) { var to = (req.To ?? "").Trim().ToLowerInvariant(); var text = (req.Text ?? "").Trim(); var iv = (req.Iv ?? "").Trim(); var ek = (req.EncryptedKey ?? "").Trim(); var sek = (req.SenderEncryptedKey ?? "").Trim(); var alg = string.IsNullOrWhiteSpace(req.Algorithm) ? "plain" : req.Algorithm.Trim(); var enc = req.Encrypted == 1;
-        if (!enc)
-            return OutgoingValidationResult.Fail("End-to-end encryption required.", 400); var rk = JsonHelpers.NormalizeJsonArray(req.RecipientKeys); var sk = JsonHelpers.NormalizeJsonArray(req.SenderKeys); if (string.IsNullOrWhiteSpace(to) || !AppHelpers.IsValidUsername(to) || to == from) return OutgoingValidationResult.Fail("Ogiltig mottagare.", 400); if (!AppHelpers.UserExists(to)) return OutgoingValidationResult.Fail("Finns inte.", 404); if (AppHelpers.IsUserBanned(from) || AppHelpers.IsUserBanned(to)) return OutgoingValidationResult.Fail("Spärrad.", 403); if (string.IsNullOrWhiteSpace(text) || text.Length > AppConfig.MaxCipherPayloadLength) return OutgoingValidationResult.Fail("Ogiltigt meddelande.", 400); if (enc && (string.IsNullOrWhiteSpace(iv) || !string.Equals(alg, "AES-GCM", StringComparison.OrdinalIgnoreCase))) return OutgoingValidationResult.Fail("Krypteringsfel.", 400); return OutgoingValidationResult.Success(to, text, iv, ek, sek, alg, enc, rk, sk); }
+        /* TEMP QT beta: allow plain messages until desktop E2EE exists.
+           Restore E2EE check before production desktop release. */ var rk = JsonHelpers.NormalizeJsonArray(req.RecipientKeys); var sk = JsonHelpers.NormalizeJsonArray(req.SenderKeys); if (string.IsNullOrWhiteSpace(to) || !AppHelpers.IsValidUsername(to) || to == from) return OutgoingValidationResult.Fail("Ogiltig mottagare.", 400); if (!AppHelpers.UserExists(to)) return OutgoingValidationResult.Fail("Finns inte.", 404); if (AppHelpers.IsUserBanned(from) || AppHelpers.IsUserBanned(to)) return OutgoingValidationResult.Fail("Spärrad.", 403); if (string.IsNullOrWhiteSpace(text) || text.Length > AppConfig.MaxCipherPayloadLength) return OutgoingValidationResult.Fail("Ogiltigt meddelande.", 400); if (enc && (string.IsNullOrWhiteSpace(iv) || !string.Equals(alg, "AES-GCM", StringComparison.OrdinalIgnoreCase))) return OutgoingValidationResult.Fail("Krypteringsfel.", 400); return OutgoingValidationResult.Success(to, text, iv, ek, sek, alg, enc, rk, sk); }
     public static object BuildPayload(long id, string from, string to, string text, string ts, bool enc, string iv, string alg, string ek, string sek, string rk, string sk, long replyTo) => new { id, from, to, text, ts, encrypted = enc, iv, algorithm = alg, encryptedKey = ek, senderEncryptedKey = sek, recipientKeys = JsonHelpers.DeserializeDeviceCipherArray(rk), senderKeys = JsonHelpers.DeserializeDeviceCipherArray(sk), replyTo = replyTo > 0 ? replyTo : (long?)null };
     static object ReadPayload(SqliteDataReader r) => BuildPayload(r.GetInt64(0), r.IsDBNull(1)?"":r.GetString(1), r.IsDBNull(2)?"":r.GetString(2), r.IsDBNull(3)?"":r.GetString(3), r.IsDBNull(4)?"":r.GetString(4), !r.IsDBNull(5)&&r.GetInt32(5)==1, r.IsDBNull(6)?"":r.GetString(6), r.IsDBNull(7)?"plain":r.GetString(7), r.IsDBNull(8)?"":r.GetString(8), r.IsDBNull(9)?"":r.GetString(9), r.IsDBNull(10)?"[]":r.GetString(10), r.IsDBNull(11)?"[]":r.GetString(11), r.IsDBNull(12)?0:r.GetInt64(12));
     public static List<object> LoadHistory(string me, string peer) { var rows = new List<object>(); using var db = DbHelpers.OpenDb(); using var cmd = db.CreateCommand(); cmd.CommandText = "SELECT Id,FromUser,ToUser,Message,Timestamp,Encrypted,Iv,Algorithm,EncryptedKey,SenderEncryptedKey,RecipientKeysJson,SenderKeysJson,ReplyToId FROM ChatMessages WHERE (FromUser=$me AND ToUser=$p) OR (FromUser=$p AND ToUser=$me) ORDER BY Id ASC LIMIT 500"; cmd.Parameters.AddWithValue("$me", me); cmd.Parameters.AddWithValue("$p", peer); using var r = cmd.ExecuteReader(); while (r.Read()) rows.Add(ReadPayload(r)); return rows; }
@@ -7519,7 +11060,7 @@ public static class ContentFilter {
     }
 }
 public static class InputSanitizer { public static string SanitizeInput(string i, int max = 1000) { if (string.IsNullOrEmpty(i)) return ""; var r = i.Trim(); return r.Length > max ? r[..max] : r; } public static string SanitizeOutput(string o) => string.IsNullOrEmpty(o) ? "" : o.Replace("&","&amp;").Replace("<","&lt;").Replace(">","&gt;").Replace("\"","&quot;").Replace("'","&#x27;"); public static string SanitizeUrl(string u) { if (string.IsNullOrEmpty(u)) return ""; var t = u.Trim(); return t.StartsWith("javascript:",StringComparison.OrdinalIgnoreCase) || t.StartsWith("data:",StringComparison.OrdinalIgnoreCase) ? "" : t; } public static string SanitizeSearchQuery(string q) => Regex.Replace(q, @"[;'""\\]", ""); public static bool IsValidAvatarUrl(string url) { if (string.IsNullOrWhiteSpace(url)) return false; var t = url.Trim(); if (t.StartsWith("/uploads/avatars/")) return true; if (t.StartsWith("https://") && Uri.TryCreate(t, UriKind.Absolute, out _)) return true; return false; } }
-public static class FileValidator { static readonly Dictionary<string, byte[][]> Magic = new() { [".png"]=new[]{new byte[]{0x89,0x50,0x4E,0x47}}, [".jpg"]=new[]{new byte[]{0xFF,0xD8,0xFF}}, [".jpeg"]=new[]{new byte[]{0xFF,0xD8,0xFF}}, [".gif"]=new[]{new byte[]{0x47,0x49,0x46,0x38}}, [".webp"]=new[]{new byte[]{0x52,0x49,0x46,0x46}} }; public static async Task<bool> IsValidImageAsync(IFormFile f) { var ext = Path.GetExtension(f.FileName).ToLowerInvariant(); if (!Magic.TryGetValue(ext, out var sigs)) return false; using var s = f.OpenReadStream(); var buf = new byte[8]; var read = await s.ReadAsync(buf); return read >= 3 && sigs.Any(sig => buf.Take(sig.Length).SequenceEqual(sig)); } }
+public static class FileValidator { static readonly Dictionary<string, byte[][]> Magic = new() { [".png"]=new[]{new byte[]{0x89,0x50,0x4E,0x47}}, [".jpg"]=new[]{new byte[]{0xFF,0xD8,0xFF}}, [".jpeg"]=new[]{new byte[]{0xFF,0xD8,0xFF}}, [".gif"]=new[]{new byte[]{0x47,0x49,0x46,0x38}}, [".webp"]=new[]{new byte[]{0x52,0x49,0x46,0x46}} }; public static async Task<bool> IsValidImageAsync(IFormFile f) { var ext = Path.GetExtension(DefensiveInput.SafeFileName(f.FileName)).ToLowerInvariant(); if (!Magic.TryGetValue(ext, out var sigs)) return false; using var s = f.OpenReadStream(); var buf = new byte[8]; var read = await s.ReadAsync(buf); return read >= 3 && sigs.Any(sig => buf.Take(sig.Length).SequenceEqual(sig)); } }
 public record LoginReq(string Username, string Password, string? CaptchaToken = null, string? Email = null, string? TotpCode = null);
 public record NewsCreateReq(string TitleSv, string? TitleEn, string? TitleRu, string? TitleFr, string BodySv, string? BodyEn, string? BodyRu, string? BodyFr, string? Tag, List<string>? ImageUrls = null);
 public record ChangeRoleReq(string Role);
@@ -7598,10 +11139,50 @@ public class SmtpMailService
 {
     public static async Task SendOtpAsync(string toEmail, string toUsername, string code, string action)
     {
+
         var apiKey = Environment.GetEnvironmentVariable("SENDGRID_API_KEY") ?? "";
         var actionText = action == "verify" ? "verify your new account" : action == "reset" ? "reset your password" : "complete your sign in";
         var subject = action == "welcome" ? "Welcome to RunSpace!" : $"Your RunSpace code: {code}";
         var html = $"<!DOCTYPE html><html><body style='margin:0;padding:0;background:#07070d;font-family:sans-serif'><div style='max-width:480px;margin:40px auto;background:#0e0e18;border:1px solid #ffffff18;border-radius:16px;overflow:hidden'><div style='background:#4f6ef7;padding:24px;text-align:center'><div style='font-size:22px;font-weight:700;color:white'>RunSpace</div></div><div style='padding:32px 28px'><p style='color:#dde0f0;font-size:15px;margin:0 0 8px'>Hi {toUsername},</p><p style='color:#787b99;font-size:13px;margin:0 0 28px'>Use the code below to {actionText}:</p><div style='background:#13131e;border:1px solid #ffffff18;border-radius:12px;padding:24px;text-align:center;margin-bottom:28px'><div style='font-family:monospace;font-size:36px;font-weight:700;color:#ffffff;letter-spacing:8px'>{code}</div><div style='color:#787b99;font-size:12px;margin-top:10px'>Expires in 15 minutes</div></div><p style='color:#4e5068;font-size:12px;margin:0'>If you did not request this, ignore this email.</p></div></div></body></html>";
+
+        var resendApiKey = Environment.GetEnvironmentVariable("RESEND_API_KEY");
+        if (!string.IsNullOrWhiteSpace(resendApiKey))
+        {
+            var resendFrom = Environment.GetEnvironmentVariable("RESEND_FROM");
+            if (string.IsNullOrWhiteSpace(resendFrom))
+                resendFrom = "RunSpace Support <support@runspace.cloud>";
+
+            using var resendHttp = new System.Net.Http.HttpClient();
+            resendHttp.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", resendApiKey);
+            resendHttp.DefaultRequestHeaders.UserAgent.ParseAdd("RunSpace/1.0");
+
+            var resendPayload = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                from = resendFrom,
+                to = new[] { toEmail },
+                subject = subject,
+                html = html
+            });
+
+            using var resendContent = new System.Net.Http.StringContent(
+                resendPayload,
+                System.Text.Encoding.UTF8,
+                "application/json"
+            );
+
+            var resendResponse = await resendHttp.PostAsync("https://api.resend.com/emails", resendContent);
+
+            Console.WriteLine($"[RESEND] Status: {(int)resendResponse.StatusCode} {resendResponse.StatusCode}");
+
+            if (!resendResponse.IsSuccessStatusCode)
+            {
+                Console.WriteLine("[RESEND] send failed.");
+                throw new Exception("Resend send failed: " + resendResponse.StatusCode);
+            }
+
+            return;
+        }
         var client = new SendGrid.SendGridClient(apiKey);
         var from = new SendGrid.Helpers.Mail.EmailAddress("support@runspace.cloud", "RunSpace");
         var to = new SendGrid.Helpers.Mail.EmailAddress(toEmail, toUsername);

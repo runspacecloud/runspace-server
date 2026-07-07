@@ -175,27 +175,6 @@
         </div>
 
         <div class="card">
-          <div class="card-title">Password</div>
-          <div class="form-grid">
-            <div class="form-group">
-              <label>Current password</label>
-              <input type="password" id="field-current-pw" placeholder="••••••••" />
-            </div>
-            <div class="form-group">
-              <label>New password</label>
-              <input type="password" id="field-new-pw" placeholder="••••••••" />
-            </div>
-            <div class="form-group">
-              <label>Confirm new password</label>
-              <input type="password" id="field-confirm-pw" placeholder="••••••••" />
-            </div>
-          </div>
-          <div class="form-row mt-sm">
-            <button class="btn btn--primary btn--sm" id="btn-change-pw">Update password</button>
-          </div>
-        </div>
-
-        <div class="card">
           <div class="card-title">Two-Factor Authentication</div>
           <div class="tfa-row">
             <div>
@@ -239,8 +218,8 @@
             </div>
             <div class="toggle-row">
               <div>
-                <div class="toggle-label">Password changed</div>
-                <div class="toggle-hint">Alert when your password is updated.</div>
+                <div class="toggle-label">Account Key changed</div>
+                <div class="toggle-hint">Alert when your Account Key is rotated.</div>
               </div>
               <label class="toggle"><input type="checkbox" checked /><span></span></label>
             </div>
@@ -255,11 +234,29 @@
         </div>
 
         <div class="card">
-          <div class="card-title">Recovery Codes</div>
-          <div class="field-hint mb-sm">One-time codes you can use if you lose access to 2FA.</div>
+          <div class="card-title">Account Recovery Codes</div>
+          <div class="field-hint mb-sm">
+            One-time codes you can use if you lose your Account Key. Store them somewhere safe. They are shown only once.
+          </div>
           <div class="form-row">
-            <button class="btn btn--ghost btn--sm" id="btn-gen-recovery">Generate recovery codes</button>
-            <button class="btn btn--ghost btn--sm" id="btn-view-recovery">View existing codes</button>
+            <button class="btn btn--ghost btn--sm" id="btn-gen-recovery">Generate new recovery codes</button>
+            <button class="btn btn--ghost btn--sm" id="btn-view-recovery">Check remaining codes</button>
+            <button class="btn btn--ghost btn--sm" id="btn-download-recovery" style="display:none">Download codes</button>
+          </div>
+          <div class="field-hint" id="recovery-status" style="margin-top:10px">Loading recovery status…</div>
+          <textarea id="recovery-codes-output" readonly style="display:none;margin-top:12px;width:100%;min-height:190px;border-radius:12px;padding:12px;background:#07111f;color:#dbeafe;border:1px solid rgba(148,163,184,.25);font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace"></textarea>
+        </div>
+
+        <div class="card" id="account-key-card">
+          <div class="card-title">Account Key</div>
+          <div class="field-hint mb-sm">
+            Your .key file can be used to sign in to your account. Generate a new one if you lost the old file or want to replace it.
+          </div>
+          <div class="form-row">
+            <button class="btn btn--ghost btn--sm" id="btn-generate-account-key">Generate new .key file</button>
+          </div>
+          <div class="field-hint" id="account-key-status" style="margin-top:10px">
+            Old .key files will stop working after a new key is activated.
           </div>
         </div>
 
@@ -288,11 +285,11 @@
       <!-- ── DEVICES ── -->
       <section class="settings-section" id="section-devices">
         <div class="section-header">
-          <h1>Devices</h1>
-          <p>Trusted devices with access to your encrypted data.</p>
+          <h1>Encryption Devices</h1>
+          <p>Devices that have registered encryption keys for encrypted chat.</p>
         </div>
         <div class="card">
-          <div class="card-title">Trusted Devices</div>
+          <div class="card-title">Encryption Device Keys</div>
           <div class="device-list" id="device-list">
             <div class="log-empty">Loading…</div>
           </div>
@@ -300,7 +297,7 @@
         <div class="card">
           <div class="card-title">Actions</div>
           <div class="form-row">
-            <button class="btn btn--ghost btn--sm btn--danger-soft" id="btn-revoke-all-devices">Revoke all device keys</button>
+            <button class="btn btn--ghost btn--sm btn--danger-soft" id="btn-revoke-all-devices">Revoke all encryption device keys</button>
           </div>
         </div>
       </section>
@@ -583,6 +580,8 @@
     </main>
   </div>
 
-  <script src="script.js?v=5"></script>
+  <script src="script.js?v=no-password2"></script>
+
+<script src="/profile/settings/security-panels.js" defer></script>
 </body>
 </html>

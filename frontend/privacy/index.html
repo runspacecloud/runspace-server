@@ -9,6 +9,114 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="/privacy/sidebar-v31.css?v=1782577920">
+
+<style id="privacy-content-final-fix">
+/* ===== Privacy content final width fix ===== */
+
+/* Sidebar is fixed at 240px. The content must live in the remaining page area. */
+body {
+  padding-left: 240px !important;
+  box-sizing: border-box !important;
+  overflow-x: hidden !important;
+}
+
+/* The original privacy page had a narrow editorial column.
+   Override it so the policy becomes readable again. */
+.policy-page,
+.policy-shell,
+.policy-wrap,
+.policy-container,
+.policy-main,
+.privacy-page,
+.privacy-shell,
+.legal-page,
+.legal-shell,
+main {
+  width: calc(100vw - 240px) !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding-left: clamp(54px, 6vw, 96px) !important;
+  padding-right: clamp(34px, 5vw, 84px) !important;
+  box-sizing: border-box !important;
+}
+
+/* Hero and body should have a normal readable width, not a tiny sidebar column. */
+.policy-hero,
+.policy-body,
+.policy-content,
+.policy-section,
+.policy-list {
+  width: 100% !important;
+  max-width: 980px !important;
+  min-width: 0 !important;
+  margin-left: 0 !important;
+  margin-right: auto !important;
+  box-sizing: border-box !important;
+}
+
+/* Hero text */
+.policy-hero p,
+.policy-meta,
+.policy-body p,
+.policy-section p {
+  max-width: 860px !important;
+  line-height: 1.7 !important;
+}
+
+/* Lists/cards inside the policy */
+.policy-list {
+  display: grid !important;
+  gap: 12px !important;
+}
+
+.policy-list-item {
+  width: 100% !important;
+  max-width: 860px !important;
+  display: grid !important;
+  grid-template-columns: 16px minmax(0, 1fr) !important;
+  gap: 14px !important;
+  align-items: start !important;
+  box-sizing: border-box !important;
+}
+
+.policy-list-item > div:last-child {
+  max-width: none !important;
+  width: 100% !important;
+}
+
+/* Stop old decorative/narrow layout from squeezing the text */
+.fu,
+.d2 {
+  max-width: 980px !important;
+  width: 100% !important;
+}
+
+/* Mobile */
+@media (max-width: 760px) {
+  body {
+    padding-left: 0 !important;
+  }
+
+  .policy-page,
+  .policy-shell,
+  .policy-wrap,
+  .policy-container,
+  .policy-main,
+  .privacy-page,
+  .privacy-shell,
+  .legal-page,
+  .legal-shell,
+  main {
+    width: 100% !important;
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+}
+</style>
+
 </head>
 <body>
 
@@ -18,41 +126,39 @@
 
   <!-- Sidebar -->
   <aside class="side">
-    <a href="/" class="side-logo">
-      <div class="side-logo-mark">R</div>
-      RunSpace
-    </a>
+  <div class="side-brand">
+    <div class="side-logo">R</div>
+    <div class="side-name">RunSpace</div>
+  </div>
 
-    <div class="side-group-label">Platform</div>
+  <div class="side-group-label">Menu</div>
 
-    <a href="/" class="side-item">
-      <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-      Home
-    </a>
-    <a href="/about" class="side-item">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      About
-    </a>
-    <a href="/download" class="side-item">
-      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      Download
-    </a>
-    <a href="/news" class="side-item">
-      <svg viewBox="0 0 24 24"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6z"/></svg>
-      News
-    </a>
+  <a href="/" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12l9-9 9 9"/><path d="M5 10v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V10"/></svg><span>Home</span></a>
+  <a href="/profile/settings" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg><span>Profile</span></a>
+  <a href="/chatt/" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-4 4v-4H5a1 1 0 0 1-1-1V5z"/></svg><span>Chat</span></a>
+  <a href="/spaces/" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/></svg><span>Spaces</span></a>
+  <a href="/profile/settings" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Settings</span></a>
+  <a href="/patch-notes/" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>Patch notes</span></a>
+  <a href="/account/" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="7" y1="15" x2="11" y2="15"/></svg><span>Account</span></a>
+  <a href="/premium/" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="7" y1="15" x2="11" y2="15"/></svg><span>Plans</span></a>
+  <a href="/admin/" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.5 8.5-8 9-4.5-.5-8-4.5-8-9V6l8-3z"/></svg><span>Admin</span></a>
 
-    <div class="side-group-label">Legal</div>
+  <div class="side-group-label">Info</div>
 
-    <a href="/tos" class="side-item">
-      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-      Terms
-    </a>
-    <a href="/privacy" class="side-item active">
-      <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      Privacy
-    </a>
-  </aside>
+  <a href="/about/" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="8" r="0.5" fill="currentColor" stroke="none"/></svg><span>About</span></a>
+  <a href="/download/" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11"/><polyline points="7 10 12 15 17 10"/><path d="M4 18v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></svg><span>Download</span></a>
+  <a href="/news/" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h13a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5z"/><path d="M18 8h2a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><line x1="7" y1="9" x2="15" y2="9"/><line x1="7" y1="13" x2="15" y2="13"/></svg><span>News</span></a>
+  <a href="/term-of-service/" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7z"/><polyline points="14 3 14 7 18 7"/></svg><span>Terms of Service</span></a>
+  <a href="/privacy/" class="side-item active"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.5 8.5-8 9-4.5-.5-8-4.5-8-9V6l8-3z"/><polyline points="9 12 11 14 15 10"/></svg><span>Privacy Policy</span></a>
+  <a href="/sponsors/" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/></svg><span>Sponsors</span></a>
+
+  <div class="side-group-label">Links</div>
+
+  <a href="https://discord.gg/828fwVgdU3" target="_blank" rel="noopener" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 4H8a5 5 0 0 0-5 5v4a5 5 0 0 0 5 5h1l1.5 2.5a.5.5 0 0 0 .8 0L13 18h5a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3z"/><circle cx="9" cy="11" r="1"/><circle cx="15" cy="11" r="1"/></svg><span>Discord</span></a>
+  <a href="/support/" class="side-item"><svg class="side-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-2.5 2-2.5 3.5"/><circle cx="12" cy="16.5" r="0.5" fill="currentColor" stroke="none"/></svg><span>Support</span></a>
+
+  <div class="side-footer">RunSpace © 2026 · <span class="rs-version">v3.1</span></div>
+</aside>
 
   <!-- Main -->
   <div class="main">
@@ -203,5 +309,89 @@
 </div>
 
 <script src="script.js"></script>
+
+<style id="privacy-main-class-width-fix">
+/* ===== Privacy .main class width fix ===== */
+
+/* Privacy page uses <div class="main">, not <main>. */
+body {
+  padding-left: 240px !important;
+  box-sizing: border-box !important;
+  overflow-x: hidden !important;
+}
+
+/* This is the real content wrapper on /privacy/ */
+.main {
+  width: calc(100vw - 240px) !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding-left: clamp(64px, 7vw, 120px) !important;
+  padding-right: clamp(40px, 6vw, 96px) !important;
+  box-sizing: border-box !important;
+}
+
+/* Kill the old narrow editorial rail */
+.hero,
+.hero.fu,
+.hero.fu.d1,
+.hero-body,
+.policy-body,
+.policy-body.fu,
+.policy-body.fu.d2,
+.policy-section,
+.policy-list {
+  width: 100% !important;
+  max-width: 980px !important;
+  min-width: 0 !important;
+  margin-left: 0 !important;
+  margin-right: auto !important;
+  box-sizing: border-box !important;
+}
+
+/* Make the intro readable */
+.hero-body p,
+.hero p,
+.policy-section p,
+.policy-body p {
+  max-width: 860px !important;
+  line-height: 1.7 !important;
+}
+
+/* Fix policy list width */
+.policy-list {
+  display: grid !important;
+  gap: 12px !important;
+}
+
+.policy-list-item {
+  width: 100% !important;
+  max-width: 860px !important;
+  display: grid !important;
+  grid-template-columns: 16px minmax(0, 1fr) !important;
+  gap: 14px !important;
+  align-items: start !important;
+}
+
+.policy-list-item > div:last-child {
+  width: 100% !important;
+  max-width: none !important;
+}
+
+/* Mobile */
+@media (max-width: 760px) {
+  body {
+    padding-left: 0 !important;
+  }
+
+  .main {
+    width: 100% !important;
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+}
+</style>
+
 </body>
 </html>

@@ -2,7 +2,13 @@
   if (!('serviceWorker' in navigator)) return;
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js', { scope: '/' })
-      .then(reg => console.log('[PWA] SW registered:', reg.scope))
+      .then(reg => {
+        console.log('[PWA] SW registered:', reg.scope);
+        try { reg.update(); } catch (_) {}
+        if (navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_CACHE' });
+        }
+      })
       .catch(err => console.warn('[PWA] SW failed:', err));
   });
   let deferredPrompt;

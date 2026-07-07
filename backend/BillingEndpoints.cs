@@ -67,7 +67,7 @@ ON UserSubscriptions(StripeSubscriptionId);
     private static bool IsLoggedIn(HttpContext ctx)
     {
         var hasAuthCookie =
-            ctx.Request.Cookies.ContainsKey("runspace_auth") ||
+            ctx.Request.Cookies.ContainsKey("runspace_auth_v3") ||
             ctx.Request.Cookies.ContainsKey(".AspNetCore.Cookies");
 
         return hasAuthCookie && ctx.User?.Identity?.IsAuthenticated == true;

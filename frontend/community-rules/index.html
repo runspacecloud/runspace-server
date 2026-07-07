@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><script src="/theme.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Community Rules — RunSpace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/about/style.css" />
+
+<style id="rs-community-rules-mobile-fix-v1">
+/* Mobile readability fix for Community Rules */
+@media (max-width: 760px) {
+  body {
+    background: #070912 !important;
+  }
+
+  .shell {
+    display: block !important;
+    min-height: auto !important;
+  }
+
+  .side {
+    position: relative !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    border-right: 0 !important;
+    padding: 22px 24px 8px !important;
+    background: transparent !important;
+  }
+
+  .side-group-label,
+  .side-item {
+    display: none !important;
+  }
+
+  .side-logo {
+    display: inline-flex !important;
+  }
+
+  .main {
+    margin-left: 0 !important;
+    width: 100% !important;
+  }
+
+  .wrap {
+    width: 100% !important;
+    max-width: none !important;
+    padding: 18px 24px 56px !important;
+  }
+
+  .fu {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+  }
+
+  .hero {
+    min-height: 0 !important;
+    padding: 26px 0 24px !important;
+    margin: 0 !important;
+  }
+
+  .hero-kicker {
+    margin-bottom: 14px !important;
+    color: rgba(116, 162, 255, .92) !important;
+    font-size: 11px !important;
+    letter-spacing: .18em !important;
+  }
+
+  .hero h1 {
+    font-size: clamp(38px, 12vw, 52px) !important;
+    line-height: 1.02 !important;
+    letter-spacing: -0.06em !important;
+    color: rgba(242, 246, 255, .96) !important;
+  }
+
+  .hero h1 em {
+    color: #4b7dff !important;
+    opacity: .95 !important;
+  }
+
+  .hero-body {
+    margin-top: 22px !important;
+    display: block !important;
+  }
+
+  .hero-body p {
+    color: rgba(185, 198, 220, .86) !important;
+    font-size: 15px !important;
+    line-height: 1.7 !important;
+    margin: 0 0 16px !important;
+  }
+
+  .statement {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    margin-top: 10px !important;
+  }
+
+  .stmt-item {
+    padding: 18px !important;
+    border-radius: 18px !important;
+    background: rgba(13, 17, 29, .72) !important;
+    border: 1px solid rgba(148, 163, 184, .16) !important;
+  }
+
+  .origin,
+  .facts {
+    margin-top: 18px !important;
+  }
+
+  .origin-text p,
+  .fact-text {
+    color: rgba(185, 198, 220, .84) !important;
+    font-size: 14px !important;
+    line-height: 1.68 !important;
+  }
+
+  .site-footer {
+    margin-left: 0 !important;
+    padding: 28px 24px !important;
+  }
+}
+</style>
+
+
+<style id="rs-community-rules-mobile-fix-v2">
+@media (max-width: 760px) {
+  .wrap {
+    padding: 14px 22px 46px !important;
+  }
+
+  .hero {
+    padding: 18px 0 18px !important;
+    margin: 0 !important;
+    min-height: 0 !important;
+  }
+
+  .hero-kicker {
+    margin-bottom: 12px !important;
+    font-size: 10px !important;
+    letter-spacing: .18em !important;
+  }
+
+  .hero h1 {
+    max-width: 350px !important;
+    font-size: clamp(32px, 9.4vw, 42px) !important;
+    line-height: 1.05 !important;
+    letter-spacing: -0.055em !important;
+  }
+
+  .hero-body {
+    margin-top: 18px !important;
+  }
+
+  .hero-body p {
+    max-width: 340px !important;
+    font-size: 14px !important;
+    line-height: 1.58 !important;
+    margin-bottom: 12px !important;
+  }
+
+  .statement {
+    margin-top: 6px !important;
+    gap: 10px !important;
+  }
+
+  .stmt-item {
+    padding: 16px !important;
+    border-radius: 16px !important;
+    display: grid !important;
+    grid-template-columns: 44px 1fr !important;
+    column-gap: 14px !important;
+    align-items: start !important;
+  }
+
+  .stmt-icon {
+    width: 42px !important;
+    height: 42px !important;
+    border-radius: 13px !important;
+    margin: 0 !important;
+  }
+
+  .stmt-icon svg {
+    width: 20px !important;
+    height: 20px !important;
+  }
+
+  .stmt-item h3 {
+    margin: 0 0 5px !important;
+    font-size: 15px !important;
+    line-height: 1.25 !important;
+  }
+
+  .stmt-item p {
+    font-size: 13px !important;
+    line-height: 1.55 !important;
+    margin: 0 !important;
+  }
+
+  .origin {
+    margin-top: 18px !important;
+  }
+
+  .origin-text p {
+    font-size: 13px !important;
+    line-height: 1.62 !important;
+    margin-bottom: 12px !important;
+  }
+
+  .section-label {
+    font-size: 10px !important;
+    letter-spacing: .18em !important;
+    margin-bottom: 14px !important;
+  }
+
+  .divider {
+    margin: 22px 0 !important;
+  }
+
+  .fact {
+    gap: 12px !important;
+    padding: 14px 0 !important;
+  }
+
+  .fact-text {
+    font-size: 13px !important;
+    line-height: 1.55 !important;
+  }
+}
+</style>
+
+</head>
+<body>
+
+<div class="rs-star-canvas" id="stars"></div>
+
+<div class="shell">
+
+  <!-- Sidebar -->
+  <aside class="side">
+    <a href="/" class="side-logo">
+      <div class="side-logo-mark">R</div>
+      RunSpace
+    </a>
+
+    <div class="side-group-label">Platform</div>
+
+    <a href="/" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Home
+    </a>
+    <a href="/about" class="side-item">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      About
+    </a>
+    <a href="/download" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Download
+    </a>
+    <a href="/news" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6z"/></svg>
+      News
+    </a>
+
+    <div class="side-group-label">Legal</div>
+
+    <a href="/tos" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Terms
+    </a>
+    <a href="/privacy" class="side-item">
+      <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Privacy
+    </a>
+    <a href="/community-rules/" class="side-item active">
+      <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+      Community Rules
+    </a>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="wrap">
+
+      <!-- Hero -->
+      <div class="hero fu d1">
+        <p class="hero-kicker">Community Rules</p>
+        <h1>Rules that keep<br>RunSpace safe<br><em>for everyone.</em></h1>
+        <div class="hero-body">
+          <p>RunSpace is built for private communication, trust, and control. These rules help keep the platform safe, respectful, and usable.</p>
+          <p>The goal is simple: protect privacy, reduce abuse, and keep RunSpace a place people can actually trust.</p>
+        </div>
+      </div>
+
+      <!-- Statement -->
+      <div class="statement fu d2">
+        <div class="stmt-item">
+          <div class="stmt-icon">
+            <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <h3>Respect people</h3>
+          <p>No harassment, threats, stalking, bullying, or targeted abuse.</p>
+        </div>
+        <div class="stmt-item">
+          <div class="stmt-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3>Protect privacy</h3>
+          <p>Do not expose private information, messages, credentials, or sensitive personal data.</p>
+        </div>
+        <div class="stmt-item">
+          <div class="stmt-icon">
+            <svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </div>
+          <h3>No platform abuse</h3>
+          <p>No spam, scraping, automated abuse, rate-limit evasion, or trust-system manipulation.</p>
+        </div>
+        <div class="stmt-item">
+          <div class="stmt-icon">
+            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <h3>Fair enforcement</h3>
+          <p>Rules are enforced to protect users, not to control normal disagreement.</p>
+        </div>
+      </div>
+
+      <!-- Rules -->
+      <div class="origin fu d3">
+        <div class="section-label">Rules</div>
+        <div class="origin-text">
+          <p><strong>Respect others.</strong> Do not harass, threaten, stalk, bully, or target people. Disagreements are allowed. Abuse is not.</p>
+          <p><strong>No illegal activity.</strong> Do not use RunSpace to plan, promote, distribute, or coordinate illegal activity, fraud, exploitation, or real-world harm.</p>
+          <p><strong>No spam or platform abuse.</strong> Do not mass-message, scrape, automate abuse, evade rate limits, manipulate trust systems, or disrupt the service.</p>
+          <p><strong>Protect privacy.</strong> Do not share someone else’s private information without permission, including private messages, addresses, credentials, or sensitive personal data.</p>
+          <p><strong>Security research.</strong> Responsible security testing is welcome when it avoids harm, data access, persistence, spam, or service disruption.</p>
+          <p><strong>Enforcement.</strong> RunSpace may limit, suspend, or remove accounts that break these rules. Serious abuse may result in permanent removal.</p>
+          <p><strong>Appeals.</strong> If you believe an enforcement action was wrong, contact support with your username, what happened, and why you believe it should be reviewed.</p>
+        </div>
+      </div>
+
+      <div class="divider fu d3"></div>
+
+      <!-- Practice -->
+      <div class="fu d4">
+        <div class="section-label">What this means in practice</div>
+        <div class="facts">
+          <div class="fact">
+            <div class="fact-check"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="fact-text"><strong>Private does not mean lawless.</strong> Privacy protects users. It does not protect abuse.</div>
+          </div>
+          <div class="fact">
+            <div class="fact-check"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="fact-text"><strong>Reports are reviewed carefully.</strong> Context matters, but serious harm is handled quickly.</div>
+          </div>
+          <div class="fact">
+            <div class="fact-check"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></div>
+            <div class="fact-text"><strong>Rules may evolve.</strong> As RunSpace grows, these rules may be updated to protect the community.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <footer class="site-footer">
+      <p>RunSpace &copy; 2026</p>
+      <div class="footer-links">
+        <a href="/privacy">Privacy Policy</a>
+        <a href="/tos">Terms</a>
+        <a href="/support">Support</a>
+      </div>
+    </footer>
+  </div>
+
+</div>
+
+<script src="/about/script.js"></script>
+</body>
+</html>

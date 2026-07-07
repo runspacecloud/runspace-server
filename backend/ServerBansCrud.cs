@@ -24,7 +24,12 @@ public static class ServerBans
             if (Perms.DenyHierarchy(sid, u, target, ServerPerm.BanMembers) is { } err) return err;
 
             var req = await ctx.Request.ReadFromJsonAsync<BanReq>();
-            var reason = InputSanitizer.SanitizeInput(req?.Reason ?? "", 200);
+            var rawReason = req?.Reason ?? "";
+
+            if (!DefensiveInput.IsSafeDescription(rawReason, 200))
+                return Results.BadRequest(new { message = "Ogiltig ban reason." });
+
+            var reason = InputSanitizer.SanitizeInput(rawReason, 200);
 
             using var db = DbHelpers.OpenDb();
             // Kick first (remove from server)

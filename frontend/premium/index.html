@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<head>
+    <meta charset="UTF-8">
+
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#0a0f1a">
+
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="RunSpace">
+
+    <link rel="apple-touch-icon" href="/icons/icon-180.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+
+    <link rel="stylesheet" href="/style.css">
+
+<style id="rs-footer-style">
+.rs-footer {
+  --rs-footer-bg: var(--footer-bg, var(--card, var(--panel, rgba(5,8,15,.92))));
+  --rs-footer-text: var(--text, #fff);
+  --rs-footer-muted: var(--muted, rgba(255,255,255,.58));
+  --rs-footer-border: var(--border, rgba(255,255,255,.08));
+  --rs-footer-link: var(--link, #6aa7ff);
+
+  margin-top: 80px;
+  padding: 48px 48px 28px;
+  border-top: 1px solid var(--rs-footer-border);
+  background: var(--rs-footer-bg);
+  color: var(--rs-footer-text);
+}
+
+[data-theme="light"] .rs-footer,
+.theme-light .rs-footer,
+body.light .rs-footer {
+  --rs-footer-bg: #f3f4f6;
+  --rs-footer-text: #111827;
+  --rs-footer-muted: #4b5563;
+  --rs-footer-border: rgba(17,24,39,.12);
+  --rs-footer-link: #2563eb;
+}
+
+[data-theme="dark"] .rs-footer,
+.theme-dark .rs-footer,
+body.dark .rs-footer {
+  --rs-footer-bg: #05070d;
+  --rs-footer-text: #f9fafb;
+  --rs-footer-muted: rgba(249,250,251,.62);
+  --rs-footer-border: rgba(255,255,255,.08);
+  --rs-footer-link: #60a5fa;
+}
+
+[data-theme="midnight"] .rs-footer,
+.theme-midnight .rs-footer,
+body.midnight .rs-footer {
+  --rs-footer-bg: #080816;
+  --rs-footer-text: #f9fafb;
+  --rs-footer-muted: rgba(249,250,251,.64);
+  --rs-footer-border: rgba(129,140,248,.16);
+  --rs-footer-link: #818cf8;
+}
+
+[data-theme="oled"] .rs-footer,
+.theme-oled .rs-footer,
+body.oled .rs-footer {
+  --rs-footer-bg: #000;
+  --rs-footer-text: #fff;
+  --rs-footer-muted: rgba(255,255,255,.62);
+  --rs-footer-border: rgba(255,255,255,.1);
+  --rs-footer-link: #3b82f6;
+}
+
+.rs-footer-grid {
+  max-width: 1180px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(130px, 1fr));
+  gap: 34px;
+}
+
+.rs-footer h4 {
+  margin: 0 0 16px;
+  color: var(--rs-footer-text);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.rs-footer a {
+  display: block;
+  margin: 10px 0;
+  color: var(--rs-footer-muted);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.rs-footer a:hover {
+  color: var(--rs-footer-link);
+}
+
+.rs-footer-bottom {
+  max-width: 1180px;
+  margin: 38px auto 0;
+  padding-top: 22px;
+  border-top: 1px solid var(--rs-footer-border);
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--rs-footer-muted);
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .rs-footer-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .rs-footer {
+    padding: 38px 24px 24px;
+  }
+
+  .rs-footer-bottom {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 520px) {
+  .rs-footer-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+
+  <link rel="stylesheet" href="/assets/css/mobile-more-links.css">
+  <link rel="stylesheet" href="/assets/css/mobile-core.css">
+    <link rel="stylesheet" href="/premium/style.css?v=1782567349">
+</head>
+
+<meta charset="UTF-8">
+<link rel="icon" href="/favicon.ico">
+<link rel="icon" type="image/png" sizes="1024x1024" href="/assets/runspace_icon_1024.png">
+<link rel="apple-touch-icon" sizes="1024x1024" href="/assets/runspace_icon_1024.png">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RunSpace Plans</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&amp;family=DM+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+
+</head>
+<body>
+
+<!-- premium rs stars begin -->
+<div id="rsStarCanvas" class="rs-star-canvas" aria-hidden="true"></div>
+
+<script>
+document.addEventListener('DOMContentLoaded',function(){
+  var c=document.getElementById('rsStarCanvas');
+  if(!c)return;
+  for(var i=0;i<150;i++){
+    var s=document.createElement('div');
+    s.className='rs-star-dot';
+    var sz=(Math.random()*1.8+0.4).toFixed(2);
+    var dur=(Math.random()*12+8).toFixed(1);
+    var delay=(Math.random()*-20).toFixed(1);
+    var op=(Math.random()*0.5+0.4).toFixed(2);
+    s.style.cssText='left:'+(Math.random()*100).toFixed(2)+'%;top:0;width:'+sz+'px;height:'+sz+'px;background:rgba(255,255,255,'+op+');animation-duration:'+dur+'s;animation-delay:'+delay+'s';
+    c.appendChild(s);
+  }
+});
+</script>
+<!-- premium rs stars end -->
+
+
+<!-- Mobile top bar -->
+<div class="mobile-topbar">
+  <div class="mt-brand">
+    <div class="mt-logo">R</div>
+    <div>
+      <div class="mt-name">RunSpace</div>
+      <div class="mt-ver">v3.1</div>
+    </div>
+  </div>
+  <div class="mt-actions">
+    <button class="mt-btn" onclick="location.href='/chatt'" aria-label="Messages">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    </button>
+    <button class="mt-btn" onclick="location.href='/profile/settings'" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </button>
+  </div>
+</div>
+<div class="shell">
+<aside class="side" id="sidebar">
+<div class="logo"><div class="logo-icon">R</div><span>RunSpace</span></div>
+
+<div class="nav-label" data-i18n="menu">Menu</div>
+
+<a href="/" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12l9-9 9 9"/><path d="M5 10v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V10"/></svg>
+<span data-i18n="home">Home</span>
+</a>
+
+<a href="/profile/settings" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+<span data-i18n="profile">Profile</span>
+</a>
+
+<a href="/chatt" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-4 4v-4H5a1 1 0 0 1-1-1V5z"/></svg>
+<span data-i18n="chat">Chat</span>
+</a>
+
+<a href="/spaces" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/></svg>
+Spaces
+</a>
+
+<a href="/profile/settings" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+<span data-i18n="settings">Settings</span>
+</a>
+
+<a href="/patch-notes" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+Patch notes
+</a>
+
+<a href="/account" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="7" y1="15" x2="11" y2="15"/></svg>
+<span data-i18n="account">Account</span>
+</a>
+<a aria-current="page" href="/premium" class="nav-item active">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="7" y1="15" x2="11" y2="15"/></svg>
+<span data-i18n="account">Plans</span>
+</a>
+
+<a href="/admin" id="adminLink" class="nav-item warn hidden">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.5 8.5-8 9-4.5-.5-8-4.5-8-9V6l8-3z"/><polygon points="12 9 13.2 11.4 16 11.8 14 13.8 14.4 16.5 12 15.2 9.6 16.5 10 13.8 8 11.8 10.8 11.4"/></svg>
+Admin
+</a>
+
+<div class="nav-label">Info</div>
+
+<a href="/about" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="8" r="0.5" fill="currentColor" stroke="none"/></svg>
+<span data-i18n="About">About</span>
+</a>
+
+<a href="/download" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11"/><polyline points="7 10 12 15 17 10"/><path d="M4 18v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2"/></svg>
+<span data-i18n="Download">Download</span>
+</a>
+
+<a href="/news" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h13a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5z"/><path d="M18 8h2a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><line x1="7" y1="9" x2="15" y2="9"/><line x1="7" y1="13" x2="15" y2="13"/><line x1="7" y1="17" x2="11" y2="17"/></svg>
+<span data-i18n="News">News</span>
+</a>
+
+<a href="/term-of-service/" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7z"/><polyline points="14 3 14 7 18 7"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>
+<span data-i18n="Term Of Service">Terms of Service</span>
+</a>
+
+<a href="/privacy" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.5 8.5-8 9-4.5-.5-8-4.5-8-9V6l8-3z"/><polyline points="9 12 11 14 15 10"/></svg>
+<span data-i18n="Privacy Policy">Privacy Policy</span>
+</a>
+
+<a href="/sponsors" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/></svg>
+<span data-i18n="Sponsors">Sponsors</span>
+</a>
+
+<div class="nav-label">Links</div>
+
+<a href="https://discord.gg/828fwVgdU3" target="_blank" rel="noopener" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 4H8a5 5 0 0 0-5 5v4a5 5 0 0 0 5 5h1l1.5 2.5a.5.5 0 0 0 .8 0L13 18h5a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3z"/><circle cx="9" cy="11" r="1"/><circle cx="15" cy="11" r="1"/></svg>
+Discord
+</a>
+
+<a href="/support" class="nav-item">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.5-2.5 2-2.5 3.5"/><circle cx="12" cy="16.5" r="0.5" fill="currentColor" stroke="none"/></svg>
+Support
+</a>
+
+<a href="/cases-admin" class="nav-item admin-only" id="casesAdminLink" style="display: none;">
+<svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4V8z"/><line x1="12" y1="6" x2="12" y2="18" stroke-dasharray="2 2"/></svg>
+Cases Admin
+</a>
+
+<div class="side-footer">RunSpace © 2026 · <span class="rs-version">v3.1</span></div>
+</aside>
+
+<main class="main premium-main">
+<section class="premium-page">
+  <div class="premium-badge">Coming soon</div>
+
+  <section class="premium-hero">
+    <h1>RunSpace Plans</h1>
+    <p>
+      RunSpace plans are optional upgrades for identity, account control,
+      stronger privacy tools and early supporter status
+      to selected RunSpace features.
+    </p>
+
+    <div class="premium-actions">
+      <button id="notifyBtn" class="premium-primary">Notify me</button>
+      <a class="premium-secondary" href="/">Back to RunSpace</a>
+    </div>
+  </section>
+
+  <section class="premium-grid">
+    <article class="premium-card">
+      <h2>Profile cosmetics</h2>
+      <p>Extra profile styling, visual upgrades and optional premium identity features.</p>
+    </article>
+
+    <article class="premium-card">
+      <h2>Advanced stats</h2>
+      <p>More useful account, profile and activity statistics when the system is ready.</p>
+    </article>
+
+    <article class="premium-card">
+      <h2>Early access</h2>
+      <p>Try selected RunSpace experiments before they become public.</p>
+    </article>
+  </section>
+
+  <section class="premium-panel">
+    <div>
+      <span>RunSpace+</span>
+      <h2>RunSpace plans are not available yet</h2>
+      <p>
+        This page is ready for the future RunSpace plan system. Payments, subscriptions
+        and account upgrades are not connected yet.
+      </p>
+    </div>
+
+    <button id="premiumBtn" class="premium-primary">Coming soon</button>
+  </section>
+</section>
+
+  <section class="premium-pricing">
+    <div class="premium-pricing-head">
+      <div>
+        <span class="premium-kicker">Pricing</span>
+        <h2>Choose your RunSpace tier</h2>
+        <p>
+          RunSpace plans are still planned, so prices and benefits can change before release.
+          This section is ready for the future upgrade system.
+        </p>
+      </div>
+
+      <div class="premium-controls">
+        <div class="premium-toggle" aria-label="Billing period">
+          <button class="active" type="button" data-billing="monthly">Monthly</button>
+          <button type="button" data-billing="yearly">Yearly</button>
+        </div>
+
+        <div class="premium-currency-toggle" aria-label="Currency">
+          <button class="active" type="button" data-currency="eur">EUR</button>
+          <button type="button" data-currency="usd">USD</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="premium-price-grid">
+      <article class="premium-price-card" data-plan="free">
+  <div class="price-top">
+    <span class="plan-name">RunSpace Lite</span>
+    <p>Free forever. The core RunSpace experience for everyone.</p>
+  </div>
+
+  <div class="price-value">
+    <span data-eur-monthly="€0" data-eur-yearly="€0" data-usd-monthly="$0" data-usd-yearly="$0">€0</span>
+    <small>/ month</small>
+  </div>
+
+  <ul>
+    <li>Free forever</li>
+    <li>Standard profile</li>
+    <li>Core messaging features</li>
+    <li>Community access</li>
+    <li>Basic privacy settings</li>
+  </ul>
+
+  <button class="premium-secondary price-btn" type="button">Current plan</button>
+</article>
+
+      <article class="premium-price-card featured" data-plan="premium">
+  <div class="price-ribbon">Most popular</div>
+
+  <div class="price-top">
+    <span class="plan-name">RunSpace Plus</span>
+    <p>For users who want their profile to feel personal, recognizable and premium.</p>
+  </div>
+
+  <div class="price-value">
+    <span data-eur-monthly="€4.99" data-eur-yearly="€49.99" data-usd-monthly="$4.99" data-usd-yearly="$49.99">€4.99</span>
+    <small>/ month</small>
+  </div>
+
+  <ul>
+    <li>Custom profile banner</li>
+    <li>Profile themes and visual styling</li>
+    <li>Badge showcase</li>
+    <li>Rich status and profile presence</li>
+    <li>Extra privacy controls</li>
+    <li>Personal vault and storage perks</li>
+  </ul>
+
+  <button class="premium-primary price-btn" type="button">Coming soon</button>
+</article>
+
+      <article class="premium-price-card" data-plan="plus">
+  <div class="price-top">
+    <span class="plan-name">RunSpace Command</span>
+    <p>For power users who want stronger control over their account, devices and security.</p>
+  </div>
+
+  <div class="price-value">
+    <span data-eur-monthly="€9.99" data-eur-yearly="€99.99" data-usd-monthly="$9.99" data-usd-yearly="$99.99">€9.99</span>
+    <small>/ month</small>
+  </div>
+
+  <ul>
+    <li>Everything in RunSpace Plus</li>
+    <li>Session manager</li>
+    <li>Login history and security timeline</li>
+    <li>Trusted devices</li>
+    <li>Account freeze mode</li>
+    <li>Security alerts</li>
+    <li>Desktop pro features</li>
+  </ul>
+
+  <button class="premium-primary price-btn" type="button">Coming soon</button>
+</article>
+
+      <article class="premium-price-card founder-edition" data-plan="founder">
+  <div class="price-ribbon founder-ribbon">Limited</div>
+
+  <div class="price-top">
+    <span class="plan-name">RunSpace Founder Edition</span>
+    <p>For the first people who supported RunSpace before the world caught up.</p>
+  </div>
+
+  <div class="price-value">
+    <span data-eur-monthly="Invite only" data-eur-yearly="Invite only" data-usd-monthly="Invite only" data-usd-yearly="Invite only">Invite only</span>
+    <small>limited access</small>
+  </div>
+
+  <ul>
+    <li>Founder badge</li>
+    <li>Founder number</li>
+    <li>Exclusive Founder theme</li>
+    <li>Founder profile frame</li>
+    <li>Early access to major features</li>
+    <li>Permanent founder identity</li>
+  </ul>
+
+  <button class="premium-secondary price-btn" type="button">Coming soon</button>
+</article>
+    </div>
+  </section>
+
+
+<div id="toast" class="premium-toast">RunSpace plans are coming soon.</div>
+</main>
+</div>
+
+<button id="pwa-install-btn" aria-label="Install RunSpace as app">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <polyline points="7 10 12 15 17 10"/>
+    <line x1="12" y1="15" x2="12" y2="3"/>
+  </svg>
+  <span>Install app</span>
+  <span class="close" onclick="event.stopPropagation(); document.getElementById('pwa-install-btn').style.display='none'; localStorage.setItem('pwa-install-dismissed','1');" title="Dismiss">×</span>
+</button>
+
+<!-- Mobile bottom nav -->
+<nav class="mobile-bottomnav">
+  <a href="/" class="" aria-label="Home">
+    <svg viewBox="0 0 24 24"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+    <span>Home</span>
+  </a>
+  <a href="/chatt" aria-label="Chat">
+    <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    <span>Chat</span>
+  </a>
+  <a href="/spaces" aria-label="Spaces">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/></svg>
+    <span>Spaces</span>
+  </a>
+  <a href="/inbox" aria-label="Inbox">
+    <svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+    <span>Inbox</span>
+  </a>
+  <a href="/profile/settings" aria-label="Profile">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+    <span>Me</span>
+  </a>
+</nav>
+
+<footer class="rs-footer">
+  <div class="rs-footer-grid">
+    <div>
+      <h4>Product</h4>
+      <a href="/chatt/">Chat</a>
+      <a href="/spaces/">Spaces</a>
+      <a href="/profile/">Profiles</a>
+      <a href="/premium/">Plans</a>
+      <a href="/download/">Download</a>
+    </div>
+
+    <div>
+      <h4>Company</h4>
+      <a href="/about/">About</a>
+      <a href="/news/">News</a>
+      <a href="/patch-notes/">Patch Notes</a>
+      <a href="/status/">Status</a>
+      <a href="/contact/">Contact</a>
+    </div>
+
+    <div>
+      <h4>Support</h4>
+      <a href="/support/">Support</a>
+      <a href="/report/">Report a Bug</a>
+      <a href="https://discord.gg/Cb7CzNwZwu" target="_blank" rel="noopener noreferrer">Discord</a>
+      <a href="/faq/">FAQ</a>
+    </div>
+
+    <div>
+      <h4>Legal</h4>
+      <a href="/term-of-service/">Terms Of Service</a>
+      <a href="/privacy/">Privacy Policy</a>
+      <a href="/cookies/">Cookie Policy</a>
+      <a href="/transparency/">Transparency Report</a>
+      <a href="/security/">Security</a>
+    </div>
+
+    <div>
+      <h4>Developers</h4>
+      <a href="/api/">API</a>
+      <a href="/docs/">Documentation</a>
+      <a href="/opensource/">Open Source</a>
+      <a href="/roadmap/">Roadmap</a>
+    </div>
+
+    <div>
+      <h4>Community</h4>
+      <a href="/socials/">Our Socials</a>
+      <a href="https://discord.gg/Cb7CzNwZwu" target="_blank" rel="noopener noreferrer">Discord</a>
+      <a href="/events/">Events</a>
+      <a href="/sponsors/">Sponsors</a>
+      <a href="/creators/">Creator Program</a>
+      <a href="/feedback/">Feedback</a>
+    </div>
+  </div>
+
+  <div class="rs-footer-bottom">
+    <span>RunSpace © 2026</span>
+    <span>Made in Sweden 🇸🇪</span>
+  </div>
+</footer>
+  <script src="/premium/script.js"></script>
+</body></html>

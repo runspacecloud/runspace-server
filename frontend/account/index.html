@@ -670,23 +670,12 @@ function bindActions() {
         }
     });
 
-    $("changePasswordBtn").addEventListener("click", async () => {
-        try {
-            await api("/api/auth/change-password", {
-                method: "POST",
-                body: JSON.stringify({
-                    currentPassword: $("currentPassword").value,
-                    oldPassword: $("currentPassword").value,
-                    newPassword: $("newPassword").value
-                })
-            });
-            $("currentPassword").value = "";
-            $("newPassword").value = "";
-            showNotice("Password changed.", "success");
-        } catch (err) {
-            showNotice(err.message, "error");
-        }
-    });
+    const changePasswordBtn = $("changePasswordBtn");
+    if (changePasswordBtn) {
+        changePasswordBtn.addEventListener("click", async () => {
+            showNotice("Password login is disabled. Rotate your Account Key from Profile Settings instead.", "error");
+        });
+    }
 
     $("setup2faBtn").addEventListener("click", async () => {
         try {
@@ -821,5 +810,6 @@ async function init() {
 
 init();
 </script>
+
 </body>
 </html>

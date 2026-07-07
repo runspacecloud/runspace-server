@@ -1,6 +1,34 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script src="../theme.js"></script>
+<head><script src="../theme.js">
+// rs-key-reset-format-active-v1
+(function(){
+  function setupKeyResetFormatHint(){
+    var inputs = document.querySelectorAll('input[placeholder="paste your account key"]');
+    var uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    inputs.forEach(function(input){
+      function update(){
+        var v = (input.value || "").trim();
+        input.classList.toggle("format-active", v.length > 0 || document.activeElement === input);
+        input.classList.toggle("format-ok", uuidV4.test(v));
+      }
+
+      input.addEventListener("focus", update);
+      input.addEventListener("blur", update);
+      input.addEventListener("input", update);
+      update();
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", setupKeyResetFormatHint);
+  } else {
+    setupKeyResetFormatHint();
+  }
+})();
+
+</script>
     <link rel="manifest" href="/manifest.webmanifest">
     <meta name="theme-color" content="#0a0f1a">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -167,7 +195,262 @@ html,body{height:100%;background:var(--bg);font-family:var(--sans);color:var(--t
 .secure-row{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:18px}
 .si{display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:9px;color:var(--muted);opacity:.55}
 .si svg{width:10px;height:10px}
-.rs-star-canvas{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:2}.rs-star-dot{position:absolute;border-radius:50%;animation:rsFall linear infinite}@keyframes rsFall{from{transform:translateY(-10px);opacity:0}5%{opacity:1}95%{opacity:1}to{transform:translateY(100vh);opacity:0}}</style>
+.rs-star-canvas{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:2}.rs-star-dot{position:absolute;border-radius:50%;animation:rsFall linear infinite}@keyframes rsFall{from{transform:translateY(-10px);opacity:0}5%{opacity:1}95%{opacity:1}to{transform:translateY(100vh);opacity:0}}
+/* rs-key-reset-ux-v1 */
+input[placeholder="paste your account key"]:focus,
+input[placeholder="paste your account key"].format-active {
+  border-color: rgba(74, 128, 255, .72) !important;
+  box-shadow: 0 0 0 3px rgba(74, 128, 255, .10) !important;
+}
+
+input[placeholder="paste your account key"].format-ok {
+  border-color: rgba(86, 210, 145, .62) !important;
+  box-shadow: 0 0 0 3px rgba(86, 210, 145, .08) !important;
+}
+
+
+/* rs-login-analyzing-ux-v1 */
+.rs-analysis-active {
+  color: rgba(226, 235, 255, .92) !important;
+  animation: rsAnalysisPulse 1.45s ease-in-out infinite;
+}
+
+.rs-analysis-active::after {
+  content: "";
+  display: inline-block;
+  width: 1.2em;
+  text-align: left;
+  animation: rsAnalysisDots 1.15s steps(1, end) infinite;
+}
+
+.rs-analysis-ready {
+  color: #00FF9D !important;
+  text-shadow: 0 0 14px rgba(0, 255, 157, .16);
+}
+
+.rs-analysis-ready svg {
+  stroke: #00FF9D !important;
+}
+
+@keyframes rsAnalysisPulse {
+  0%, 100% { opacity: .72; }
+  50% { opacity: 1; }
+}
+
+@keyframes rsAnalysisDots {
+  0% { content: ""; }
+  25% { content: "."; }
+  50% { content: ".."; }
+  75%, 100% { content: "..."; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rs-analysis-active {
+    animation: none;
+  }
+
+  .rs-analysis-active::after {
+    content: "...";
+    animation: none;
+  }
+}
+
+
+/* rs-login-remove-security-chips-v1 */
+.rs-login-security-chips-hidden {
+  display: none !important;
+}
+
+
+/* rs-login-remove-security-chips-v2 */
+.rs-login-empty-chip-row {
+  display: none !important;
+}
+
+
+/* rs-login-remove-ti-security-chips-v3 */
+#ti-sec,
+#ti-dev,
+#ti-enc {
+  display: none !important;
+}
+
+
+/* rs-login-remove-top-status-v1 */
+#sbar,
+#statusbar,
+#statusBar,
+#trustbar,
+#trustBar,
+#devicebar,
+#deviceBar,
+#sessionbar,
+#sessionBar,
+.rs-login-top-status-hidden {
+  display: none !important;
+}
+
+
+/* rs-login-fast-cleanup-v1 */
+#ti-sec,
+#ti-dev,
+#ti-enc,
+#sbar,
+#statusbar,
+#statusBar,
+#trustbar,
+#trustBar,
+#devicebar,
+#deviceBar,
+#sessionbar,
+#sessionBar,
+.sbar,
+.statusbar,
+.trustbar,
+.devicebar,
+.sessionbar,
+.trust-status,
+.device-status,
+.session-status {
+  display: none !important;
+}
+
+/* Keep login fast: no document-wide MutationObserver needed for hidden status UI. */
+
+
+/* rs-login-safe-legal-copy-v1 */
+.login-legal-copy {
+  margin-top: 12px;
+  max-width: 360px;
+  text-align: center;
+  color: rgba(139, 160, 199, .48);
+  font-size: 11px;
+  line-height: 1.55;
+  letter-spacing: .01em;
+}
+
+.login-legal-copy a {
+  color: rgba(151, 174, 255, .74);
+  text-decoration: none;
+}
+
+.login-legal-copy a:hover {
+  color: rgba(226, 235, 255, .92);
+  text-decoration: underline;
+}
+
+
+/* rs-login-legal-copy-polish-v2 */
+.login-legal-copy {
+  margin: 16px auto 0 !important;
+  max-width: 340px !important;
+  text-align: center !important;
+  color: rgba(139, 160, 199, .62) !important;
+  font-size: 11px !important;
+  line-height: 1.55 !important;
+  letter-spacing: .01em !important;
+}
+
+.login-legal-copy a {
+  color: rgba(151, 174, 255, .86) !important;
+  text-decoration: none !important;
+}
+
+.login-legal-copy a:hover {
+  color: rgba(226, 235, 255, .95) !important;
+  text-decoration: underline !important;
+}
+
+
+/* rs-login-width-polish-v1 */
+.card {
+  width: min(480px, calc(100vw - 32px)) !important;
+}
+
+.card-body {
+  padding-left: 32px !important;
+  padding-right: 32px !important;
+}
+
+#p-login,
+#p-key,
+#p-otp,
+#p-forgot,
+#p-blocked {
+  width: 100% !important;
+}
+
+.field,
+.finput,
+.btn {
+  width: 100% !important;
+}
+
+#tab-pw,
+#tab-key {
+  min-width: 0 !important;
+}
+
+.login-legal-copy {
+  max-width: 390px !important;
+}
+
+@media (max-width: 520px) {
+  .card {
+    width: calc(100vw - 24px) !important;
+  }
+
+  .card-body {
+    padding-left: 24px !important;
+    padding-right: 24px !important;
+  }
+}
+
+
+/* rs-login-legal-copy-community-v3 */
+.login-legal-copy {
+  margin: 10px auto 8px !important;
+  max-width: 400px !important;
+  color: rgba(139, 160, 199, .64) !important;
+}
+
+.login-legal-copy a {
+  color: rgba(151, 174, 255, .88) !important;
+}
+
+
+/* rs-login-legal-position-v4 */
+.card-foot {
+  padding-bottom: 10px !important;
+}
+
+.login-legal-copy {
+  margin: 4px auto 14px !important;
+  max-width: 410px !important;
+}
+
+</style>
+
+<style id="rs-account-key-only-v1">
+  #tab-pw { display:none !important; }
+  #tab-key {
+    width:100% !important;
+    flex:1 1 100% !important;
+    border-color:var(--accent) !important;
+    background:rgba(91,79,207,.12) !important;
+    color:var(--accent) !important;
+  }
+  #login-pw { display:none !important; }
+  #login-key { display:block !important; }
+</style>
+
+
+<style id="rs-hide-login-success-alert-v1">
+  #al-ok {
+    display:none !important;
+  }
+</style>
+
 </head>
 <body><div id="rsStarCanvas" class="rs-star-canvas" aria-hidden="true"></div><script>document.addEventListener("DOMContentLoaded",function(){var c=document.getElementById("rsStarCanvas");if(!c)return;for(var i=0;i<150;i++){var s=document.createElement("div");s.className="rs-star-dot";var sz=(Math.random()*1.8+0.4).toFixed(2);var dur=(Math.random()*12+8).toFixed(1);var delay=(Math.random()*-20).toFixed(1);var op=(Math.random()*0.5+0.4).toFixed(2);s.style.cssText="left:"+(Math.random()*100).toFixed(2)+"%;top:0;width:"+sz+"px;height:"+sz+"px;background:rgba(255,255,255,"+op+");animation-duration:"+dur+"s;animation-delay:"+delay+"s";c.appendChild(s);}});</script>
 <div class="bg"><div class="bg-orb orb1"></div><div class="bg-orb orb2"></div></div>
@@ -181,8 +464,8 @@ html,body{height:100%;background:var(--bg);font-family:var(--sans);color:var(--t
     <span class="logo-name">RunSpace</span>
     <a href="/" class="logo-back">← back</a>
   </div>
-  <div class="head-title" id="htitle">Welcome back</div>
-  <div class="head-sub" id="hsub">Sign in to your account</div>
+  <div class="head-title" id="htitle">Unlock RunSpace</div>
+  <div class="head-sub" id="hsub">Use your account key to continue</div>
 </div>
 
 <div class="card-body">
@@ -197,10 +480,6 @@ html,body{height:100%;background:var(--bg);font-family:var(--sans);color:var(--t
 
   <!-- Trust indicators -->
   <div class="ti-row">
-    <div class="ti" id="ti-sec"><div class="ti-d"></div>Secure session</div>
-    <div class="ti" id="ti-dev"><div class="ti-d"></div>Device check</div>
-    <div class="ti" id="ti-enc"><div class="ti-d"></div>Encrypted</div>
-  </div>
 
   <!-- Device recognized -->
   <div class="devbadge" id="devbadge">
@@ -209,7 +488,7 @@ html,body{height:100%;background:var(--bg);font-family:var(--sans);color:var(--t
   </div>
 
   <!-- Alerts -->
-  <div class="alert ae" id="al-err"><span class="alert-icon">⊘</span><div class="alert-body"><div class="alert-title" id="al-err-t">Incorrect credentials</div><div class="alert-sub" id="al-err-s">Check your username and password and try again.</div></div></div>
+  <div class="alert ae" id="al-err"><span class="alert-icon">⊘</span><div class="alert-body"><div class="alert-title" id="al-err-t">Incorrect credentials</div><div class="alert-sub" id="al-err-s">Check your login details and try again.</div></div></div>
   <div class="alert aw" id="al-warn"><span class="alert-icon">◈</span><div class="alert-body"><div class="alert-title" id="al-warn-t">Verification required</div><div class="alert-sub" id="al-warn-s">We need to verify it's you before continuing.</div></div></div>
   <div class="alert ag" id="al-ok"><span class="alert-icon">✓</span><div class="alert-body"><div class="alert-title" id="al-ok-t">Done</div><div class="alert-sub" id="al-ok-s"></div></div></div>
 
@@ -217,7 +496,7 @@ html,body{height:100%;background:var(--bg);font-family:var(--sans);color:var(--t
   <div class="panel active" id="p-login">
     <!-- Login method tabs -->
     <div style="display:flex;gap:6px;margin-bottom:16px">
-      <button id="tab-pw" onclick="setLoginTab('pw')" style="flex:1;padding:8px;border-radius:8px;border:0.5px solid var(--accent);background:rgba(91,79,207,.12);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)">Password</button>
+      <button id="tab-pw" onclick="setLoginTab('pw')" style="flex:1;padding:8px;border-radius:8px;border:0.5px solid var(--accent);background:rgba(91,79,207,.12);color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)">Username</button>
       <button id="tab-key" onclick="setLoginTab('key')" style="flex:1;padding:8px;border-radius:8px;border:0.5px solid var(--border2);background:none;color:var(--muted2);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)">Account key</button>
     </div>
 
@@ -225,7 +504,7 @@ html,body{height:100%;background:var(--bg);font-family:var(--sans);color:var(--t
     <div id="login-pw">
       <div class="field">
         <div class="ftop"><label class="flabel">Username or email</label></div>
-        <input class="finput" type="text" id="fu" placeholder="your username" autocomplete="username" spellcheck="false"/>
+        <input class="finput" type="text" id="fu" placeholder="john_doe" autocomplete="username" spellcheck="false"/>
         <div class="fmsg err" id="eu"></div>
       </div>
       <div class="field">
@@ -234,7 +513,7 @@ html,body{height:100%;background:var(--bg);font-family:var(--sans);color:var(--t
           <a href="#" class="flink" onclick="gotoForgot();return false">Forgot password?</a>
         </div>
         <div class="fwrap">
-          <input class="finput has-icon" type="password" id="fp" placeholder="your password" autocomplete="current-password"/>
+          <input class="finput has-icon" type="password" id="fp" placeholder="••••••••••••" autocomplete="current-password"/>
           <button class="eye-btn" type="button" id="eye1" onclick="toggleEye('fp','eye1')" title="Toggle password">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
@@ -245,19 +524,13 @@ html,body{height:100%;background:var(--bg);font-family:var(--sans);color:var(--t
     </div>
 
     <!-- Key login -->
-    <div id="login-key" style="display:none">
+    <div id="login-key" style="display:block">
       <div class="field">
-        <label class="flabel">Account key <span style="font-size:10px;color:var(--muted);font-weight:400;text-transform:none">UUID format</span></label>
-        <input class="finput" type="text" id="fkey" placeholder="xxxxxxxx-xxxx-4xxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false" style="font-family:var(--mono);font-size:12px"/>
+        <label class="flabel">Account key</label>
+        <input class="finput" type="text" id="fkey" placeholder="paste your account key" autocomplete="off" spellcheck="false" style="font-family:var(--mono);font-size:12px"/>
         <div class="fmsg err" id="ekey"></div>
       </div>
-      <div style="margin-bottom:14px">
-        <button onclick="loadKeyFromFile()" style="width:100%;padding:10px;border-radius:9px;border:0.5px dashed var(--border3);background:none;color:var(--muted2);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:all .2s">
-          Upload .key file instead
-        </button>
-        <input type="file" id="keyfile" accept=".key" style="display:none" onchange="handleKeyFile(this)"/>
-      </div>
-      <button class="btn" id="klbtn" onclick="handleKeyLogin()"><span id="klbln">Sign in with key</span></button>
+<button class="btn" id="klbtn" onclick="handleKeyLogin()"><span id="klbln">Unlock</span></button>
     </div>
   </div>
 
@@ -309,15 +582,17 @@ html,body{height:100%;background:var(--bg);font-family:var(--sans);color:var(--t
 </div><!-- /card-body -->
 
 <div class="card-foot">
-  <span class="foot-text">No account?</span>
-  <a href="/register" class="foot-link">Create one</a>
+  <span class="foot-text">Need an account?</span>
+  <a href="/register" class="foot-link">Create account</a>
 </div>
 </div><!-- /card -->
 
-<div class="secure-row">
-  <div class="si"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1L2 4v4c0 3.3 2.6 6.4 6 7.1C11.4 14.4 14 11.3 14 8V4L8 1z"/></svg>End-to-end encrypted</div>
-  <div class="si"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V5a3 3 0 016 0v2"/></svg>Zero-knowledge auth</div>
-  <div class="si"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/></svg>Trust engine active</div>
+<div class="login-legal-copy">
+  By continuing, you agree to RunSpace's
+  <a href="/term-of-service/" target="_blank" rel="noopener">Terms</a>,
+  <a href="/privacy/" target="_blank" rel="noopener">Privacy Policy</a>,
+  <a href="/privacy/#cookies" target="_blank" rel="noopener">Cookie Policy</a>,
+  and <a href="/community-rules/" target="_blank" rel="noopener">Community Rules</a>.
 </div>
 </div><!-- /page -->
 
@@ -385,7 +660,7 @@ function sbarState(state,text,badgeText){
 
 // ── PANELS ──
 var curPanel='login',pendingToken='',trustDevice=false,otpSecs=600,otpInt=null,blockedInt=null,resendCD=0,enteredEmail='';
-var panelMeta={login:{t:'Welcome back',s:'Sign in to your account'},otp:{t:'Verify your identity',s:'Extra step for this session'},blocked:{t:'Access restricted',s:'Please wait before retrying'},forgot:{t:'Reset password',s:"We'll send you a reset link"}};
+var panelMeta={login:{t:'Unlock RunSpace',s:'Use your account key to continue'},otp:{t:'Verify your identity',s:'Extra step for this session'},blocked:{t:'Access restricted',s:'Please wait before retrying'},forgot:{t:'Reset password',s:"We'll send you a reset link"}};
 
 function showPanel(id){
   document.querySelectorAll('.panel').forEach(function(p){p.classList.remove('active')});
@@ -437,8 +712,9 @@ async function handleLogin(){
   setBtn('lbtn','lbln','loading','Signing in...');
   var payload={username:user,password:pw,signals:buildSignals()};
   try{
-    var res=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json','X-Device-Token':payload.signals.deviceToken},body:JSON.stringify(payload)});
-    handleAuthResp(await res.json());
+    showErr('Account Key required','Password login is disabled. Use Account Key unlock instead.');
+    setBtn('lbtn','lbln','normal','Sign in');
+    return;
   }catch(e){
     setBtn('lbtn','lbln','normal','Sign in');
     showErr('Connection error','Could not reach the server. Check your network and try again.');
@@ -488,7 +764,7 @@ function handleAuthResp(data){
   }else{
     setBtn('lbtn','lbln','normal','Sign in');
     document.getElementById('fp').value='';document.getElementById('fp').focus();
-    showErr('Incorrect credentials',data.message||'Check your username and password and try again.');
+    showErr('Incorrect credentials',data.message||'Check your login details and try again.');
     sbarState('bad','Authentication failed','failed');
   }
 }
@@ -558,7 +834,8 @@ async function handleForgot(){
   if(!email||!email.includes('@')){fErr('freset','ereset','Enter a valid email address');return}
   clearAlerts();setBtn('fbtn','fbln','loading','Sending...');
   try{
-    await fetch('/api/auth/forgot-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email})});
+    showErr('Account Recovery','Email password reset is disabled. Use Account Recovery Codes at /recover-account/.');
+    return;
     setBtn('fbtn','fbln','ok','Link sent');showOk('Check your email','If an account exists, a reset link has been sent.');
   }catch(e){setBtn('fbtn','fbln','normal','Send reset link');showErr('Connection error','Could not send reset link. Try again.')}
 }
@@ -602,62 +879,96 @@ function setLoginTab(tab) {
 }
 
 // ── KEY FILE UPLOAD ──
-function loadKeyFromFile() { document.getElementById('keyfile').click(); }
-async function handleKeyFile(input) {
-  var file = input.files[0]; if (!file) return;
-  var pp = prompt('Enter your passphrase to decrypt the key file:');
-  if (!pp) return;
-  try {
-    var buf = await file.arrayBuffer();
-    var data = new Uint8Array(buf);
-    if (data[0] !== 0x52 || data[1] !== 0x53 || data[2] !== 0x4B || data[3] !== 0x31) { showErr('Invalid file', 'Not a valid RunSpace key file.'); return; }
-    var salt = data.slice(4, 20);
-    var iv = data.slice(20, 32);
-    var ciphertext = data.slice(32);
-    var enc = new TextEncoder();
-    var baseKey = await crypto.subtle.importKey('raw', enc.encode(pp), {name:'PBKDF2'}, false, ['deriveKey']);
-    var aesKey = await crypto.subtle.deriveKey(
-      {name:'PBKDF2', salt:salt, iterations:100000, hash:'SHA-256'},
-      baseKey, {name:'AES-GCM', length:256}, false, ['decrypt']
-    );
-    var plain = await crypto.subtle.decrypt({name:'AES-GCM', iv:iv}, aesKey, ciphertext);
-    var key = new TextDecoder().decode(plain);
-    document.getElementById('fkey').value = key;
-    showOk('Key loaded', 'Your account key has been loaded. Click Sign in to continue.');
-  } catch(e) {
-    showErr('Decryption failed', 'Wrong passphrase or corrupted file.');
-  }
-}
 
 // ── KEY LOGIN ──
 async function handleKeyLogin() {
   var key = document.getElementById('fkey').value.trim();
-  if (!key) { showErr('Key required', 'Enter your account key or upload your .key file.'); return; }
+
+  if (!key) {
+    showErr('Key required', 'Enter your account key.');
+    return;
+  }
+
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(key)) {
     showErr('Invalid key format', 'Key must be a valid UUID v4.');
     return;
   }
+
+  async function unlockWithCode(totpCode) {
+    var payload = { accountKey: key };
+    if (totpCode) payload.totpCode = totpCode;
+
+    var res = await fetch('/api/auth/unlock', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Device-Token': devToken()
+      },
+      body: JSON.stringify(payload)
+    });
+
+    var data = {};
+    try { data = await res.json(); } catch (e) {}
+
+    return { res: res, data: data };
+  }
+
   clearAlerts();
   setBtn('klbtn','klbln','loading','Signing in...');
+
   try {
-    var res = await fetch('/api/auth/login-with-key', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'X-Device-Token': devToken()},
-      body: JSON.stringify({accountKey: key})
-    });
-    var data = await res.json();
-    if (data.status === 'ok') {
+    var first = await unlockWithCode('');
+
+    if (first.data.status === 'otp_required') {
+      setBtn('klbtn','klbln','normal','Unlock');
+      sbarState('warn','2FA required','verification');
+
+      var code = prompt('Enter your 6-digit authenticator code or 8-character 2FA backup code. Do not use rsr- recovery codes here:');
+      if (!code) {
+        showErr('2FA required', 'Enter your authenticator code to continue.');
+        return;
+      }
+
+      code = code.trim().replace(/\s+/g, '').toUpperCase();
+
+      if (!/^[0-9]{6}$/.test(code) && !/^[0-9A-F]{8}$/.test(code)) {
+        showErr('Invalid 2FA code', 'Enter a 6-digit authenticator code or an 8-character 2FA backup code. rsr- recovery codes are only for /recover-account/.');
+        return;
+      }
+
+      clearAlerts();
+      setBtn('klbtn','klbln','loading','Verifying 2FA...');
+
+      var second = await unlockWithCode(code);
+
+      if (second.data.status === 'ok') {
+        setBtn('klbtn','klbln','ok','Signed in');
+        showOk('Signed in', 'Redirecting...');
+        sbarState('ok','Authenticated','trusted');
+        setTimeout(function(){ window.location.href = second.data.redirect || '/chatt'; }, 900);
+        return;
+      }
+
+      setBtn('klbtn','klbln','normal','Unlock');
+      showErr('Invalid 2FA code', second.data.message || 'Could not verify 2FA code.');
+      sbarState('bad','2FA failed','failed');
+      return;
+    }
+
+    if (first.data.status === 'ok') {
       setBtn('klbtn','klbln','ok','Signed in');
       showOk('Signed in', 'Redirecting...');
       sbarState('ok','Authenticated','trusted');
-      setTimeout(function(){ window.location.href = data.redirect || '/app'; }, 900);
-    } else {
-      setBtn('klbtn','klbln','normal','Sign in with key');
-      showErr('Invalid key', data.message || 'Could not sign in with this key.');
-      sbarState('bad','Authentication failed','failed');
+      setTimeout(function(){ window.location.href = first.data.redirect || '/chatt'; }, 900);
+      return;
     }
+
+    setBtn('klbtn','klbln','normal','Unlock');
+    showErr('Invalid key', first.data.message || 'Could not sign in with this key.');
+    sbarState('bad','Authentication failed','failed');
   } catch(e) {
-    setBtn('klbtn','klbln','normal','Sign in with key');
+    setBtn('klbtn','klbln','normal','Unlock');
     showErr('Connection error', 'Could not reach the server.');
   }
 }
@@ -666,5 +977,8 @@ async function handleKeyLogin() {
 startSBar();
 </script>
     <script src="/pwa.js" defer></script>
+
+
+
 </body>
 </html>

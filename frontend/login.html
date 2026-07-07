@@ -404,8 +404,9 @@ async function handleLogin(){
   setBtn('lbtn','lbln','loading','Signing in...');
   var payload={username:user,password:pw,signals:buildSignals()};
   try{
-    var res=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json','X-Device-Token':payload.signals.deviceToken},body:JSON.stringify(payload)});
-    handleAuthResp(await res.json());
+    showErr('Account Key required','Password login is disabled. Use Account Key unlock instead.');
+    setBtn('lbtn','lbln','normal','Sign in');
+    return;
   }catch(e){
     setBtn('lbtn','lbln','normal','Sign in');
     showErr('Connection error','Could not reach the server. Check your network and try again.');
@@ -525,7 +526,8 @@ async function handleForgot(){
   if(!email||!email.includes('@')){fErr('freset','ereset','Enter a valid email address');return}
   clearAlerts();setBtn('fbtn','fbln','loading','Sending...');
   try{
-    await fetch('/api/auth/forgot-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email})});
+    showErr('Account Recovery','Email password reset is disabled. Use Account Recovery Codes at /recover-account/.');
+    return;
     setBtn('fbtn','fbln','ok','Link sent');showOk('Check your email','If an account exists, a reset link has been sent.');
   }catch(e){setBtn('fbtn','fbln','normal','Send reset link');showErr('Connection error','Could not send reset link. Try again.')}
 }

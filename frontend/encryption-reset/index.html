@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Forgot encryption passphrase · RunSpace</title>
+<style>
+body{margin:0;min-height:100vh;background:#05050b;color:#eef0ff;font-family:system-ui;display:grid;place-items:center;padding:24px}
+.card{width:min(560px,100%);background:#10101b;border:1px solid #ffffff18;border-radius:22px;padding:26px}
+p{color:#a4a8c2;line-height:1.5}
+.warn{background:#ff5f7a15;border:1px solid #ff5f7a66;color:#ffd8df;padding:14px;border-radius:14px;margin:16px 0}
+label{display:block;margin-top:14px;font-weight:700;color:#d8dcff}
+input{width:100%;padding:12px;margin-top:6px;border-radius:12px;border:1px solid #ffffff22;background:#080812;color:#fff}
+.check{font-weight:500;color:#c8cbea}
+.check input{width:auto}
+button,a{display:inline-block;margin-top:16px;margin-right:8px;background:#7aa2ff;color:#06111f;padding:12px 15px;border:0;border-radius:12px;text-decoration:none;font-weight:800}
+a{background:#ffffff12;color:#e6e8ff}
+#status{margin-top:14px;color:#a4a8c2;white-space:pre-wrap}
+.ok{color:#62d394!important}.bad{color:#ff5f7a!important}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>Forgot your encryption passphrase?</h1>
+<p>Create a new passphrase for future encrypted messages.</p>
+<div class="warn">
+RunSpace cannot recover your old passphrase. After a reset, some older encrypted messages may no longer open.
+</div>
+<p>Your new passphrase stays in your browser and is not sent to RunSpace.</p>
+
+<label>New passphrase</label>
+<input id="p1" type="password" minlength="8" autocomplete="new-password">
+
+<label>Repeat new passphrase</label>
+<input id="p2" type="password" minlength="8" autocomplete="new-password">
+
+<label class="check">
+  <input id="ok" type="checkbox">
+  I understand that some older encrypted messages may no longer open.
+</label>
+
+<label>Type RESET to confirm</label>
+<input id="confirm" autocomplete="off" placeholder="RESET">
+
+<button id="btn" type="button">Create new passphrase</button>
+<a href="/chatt/">Back to chat</a>
+
+<div id="status"></div>
+</div>
+<script src="/encryption-reset/reset.js" defer></script>
+</body>
+</html>

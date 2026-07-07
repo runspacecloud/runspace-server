@@ -29,8 +29,15 @@ public static class ServerRoles
             if (req == null || string.IsNullOrWhiteSpace(req.Name))
                 return Results.BadRequest(new { message = "Namn krävs." });
 
-            var name  = InputSanitizer.SanitizeInput(req.Name.Trim(), 32);
-            var color = ValidColor(req.Color) ?? "#94a3b8";
+            var rawName = req.Name?.Trim() ?? "";
+            if (!DefensiveInput.IsSafeDisplayName(rawName, 1, 32))
+                return Results.BadRequest(new { message = "Ogiltigt rollnamn." });
+
+            if (req.Color != null && !DefensiveInput.IsSafeHexColor(req.Color))
+                return Results.BadRequest(new { message = "Ogiltig färg." });
+
+            var name  = DefensiveInput.CleanDisplayName(rawName, 32);
+            var color = req.Color?.Trim() ?? "#94a3b8";
             long perms = Perms.ParseBits(req.Permissions);
 
             // Actor can only grant permissions they themselves hold
@@ -79,13 +86,20 @@ public static class ServerRoles
 
             if (req.Name != null)
             {
+                var rawName = req.Name.Trim();
+                if (!DefensiveInput.IsSafeDisplayName(rawName, 1, 32))
+                    return Results.BadRequest(new { message = "Ogiltigt rollnamn." });
+
                 sets.Add("Name=$n");
-                cmd.Parameters.AddWithValue("$n", InputSanitizer.SanitizeInput(req.Name.Trim(), 32));
+                cmd.Parameters.AddWithValue("$n", DefensiveInput.CleanDisplayName(rawName, 32));
             }
             if (req.Color != null)
             {
+                if (!DefensiveInput.IsSafeHexColor(req.Color))
+                    return Results.BadRequest(new { message = "Ogiltig färg." });
+
                 sets.Add("Color=$col");
-                cmd.Parameters.AddWithValue("$col", ValidColor(req.Color) ?? "#94a3b8");
+                cmd.Parameters.AddWithValue("$col", req.Color.Trim());
             }
             if (req.Position.HasValue)
             {

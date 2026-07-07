@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS UserEncryptionKeys (
     KeyVersion INTEGER DEFAULT 1,
     CreatedAt TEXT NOT NULL,
     UpdatedAt TEXT NOT NULL,
-    FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+    FOREIGN KEY (UserId) REFERENCES AuthUsers(Id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_keys_userid ON UserEncryptionKeys(UserId);

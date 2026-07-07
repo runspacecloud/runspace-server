@@ -67,7 +67,12 @@ public static class ServerMessages
                 return Results.Json(new { message = "Säkert läge: du måste vänta lite innan du kan skicka meddelanden." }, statusCode: 429);
 
             var req  = await ctx.Request.ReadFromJsonAsync<PostMessageReq>();
-            var text = InputSanitizer.SanitizeInput(req?.Content ?? "", 4000).Trim();
+            var rawText = req?.Content ?? "";
+
+            if (!DefensiveInput.IsSafeMessageText(rawText, 4000))
+                return Results.BadRequest(new { message = "Ogiltigt meddelande." });
+
+            var text = InputSanitizer.SanitizeInput(rawText, 4000).Trim();
             if (string.IsNullOrWhiteSpace(text))
                 return Results.BadRequest(new { message = "Tomt meddelande." });
 

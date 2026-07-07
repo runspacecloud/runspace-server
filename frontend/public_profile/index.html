@@ -21,6 +21,55 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+
+
+<style id="rs-profile-stable-info-style">
+  #rs-stable-info-card {
+    width: min(580px, 100%);
+    margin-top: 12px;
+    border: 1px solid rgba(255,255,255,.10);
+    border-radius: 12px;
+    background: rgba(255,255,255,.035);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    overflow: hidden;
+  }
+
+  #rs-stable-info-card .rs-info-cell {
+    padding: 14px 16px;
+    border-right: 1px solid rgba(255,255,255,.08);
+  }
+
+  #rs-stable-info-card .rs-info-cell:last-child {
+    border-right: 0;
+  }
+
+  #rs-stable-info-card .rs-info-label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: rgba(139,160,199,.74);
+    margin-bottom: 8px;
+  }
+
+  #rs-stable-info-card .rs-info-value {
+    font-size: 13px;
+    font-weight: 800;
+    color: rgba(245,248,255,.94);
+  }
+
+  #rs-stable-info-card .rs-info-value.blue {
+    color: #4f8cff;
+  }
+
+  .rs-profile-force-hidden {
+    display: none !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+</style>
+
 </head>
 <body>
 
@@ -144,7 +193,7 @@
           <div class="section-label">Info</div>
           <div class="stats-grid">
             <div class="stat-item">
-              <span class="stat-label">Member since</span>
+              <span class="stat-label">ACCOUNT CREATED</span>
               <span class="stat-value" id="stat-age"></span>
             </div>
             <div class="stat-item">
@@ -183,5 +232,203 @@
 </div>
 
 <script src="script.js"></script>
+
+
+
+<script id="rs-profile-stable-info-script">
+(function () {
+  function text(el) {
+    return (el && el.textContent || "").trim();
+  }
+
+  function usernameFromUrl() {
+    const qs = new URLSearchParams(location.search);
+    const q = qs.get("u") || qs.get("user") || qs.get("username");
+    if (q && q.trim()) return q.trim();
+
+    const parts = location.pathname.replace(/\/$/, "").split("/").filter(Boolean);
+    const last = parts[parts.length - 1];
+
+    if (last && !["profile", "public_profile"].includes(last)) {
+      return decodeURIComponent(last);
+    }
+
+    return "";
+  }
+
+  function formatDate(value) {
+    if (!value) return "Unknown";
+
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value);
+
+    return d.toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric"
+    });
+  }
+
+  function findMainInfoLabel() {
+    return Array.from(document.querySelectorAll("body *")).find(el => {
+      const r = el.getBoundingClientRect();
+      return text(el).toUpperCase() === "INFO" && r.left > 180;
+    });
+  }
+
+  function hideUserNotFound() {
+    Array.from(document.querySelectorAll("body *")).forEach(el => {
+      if (text(el).toLowerCase() !== "user not found") return;
+
+      let box = el;
+
+      for (let i = 0; box && i < 8; i++) {
+        const r = box.getBoundingClientRect();
+
+        if (box !== document.body && r.width > 160 && r.height > 50) {
+          box.classList.add("rs-profile-force-hidden");
+          return;
+        }
+
+        box = box.parentElement;
+      }
+
+      el.classList.add("rs-profile-force-hidden");
+    });
+  }
+
+  function hideOldInfoBits(formattedDate) {
+    Array.from(document.querySelectorAll("body *")).forEach(el => {
+      if (el.closest("#rs-stable-info-card")) return;
+
+      const t = text(el);
+      const up = t.toUpperCase();
+
+      if (
+        up === "MEMBER SINCE" ||
+        up === "ACCOUNT CREATED" ||
+        up === "STATUS" ||
+        t === formattedDate ||
+        /^\\d+\\s*(m|mo|d|h|y)$/i.test(t)
+      ) {
+        let box = el;
+
+        for (let i = 0; box && i < 5; i++) {
+          const r = box.getBoundingClientRect();
+
+          if (
+            box !== document.body &&
+            r.left > 180 &&
+            r.width > 40 &&
+            r.width < 800 &&
+            r.height > 10 &&
+            r.height < 180
+          ) {
+            box.classList.add("rs-profile-force-hidden");
+            return;
+          }
+
+          box = box.parentElement;
+        }
+
+        el.classList.add("rs-profile-force-hidden");
+      }
+    });
+  }
+
+  function renderInfoCard(createdText, statusText) {
+    const info = findMainInfoLabel();
+    if (!info) return;
+
+    document.querySelectorAll("#rs-stable-info-card").forEach(x => x.remove());
+
+    const card = document.createElement("div");
+    card.id = "rs-stable-info-card";
+
+    card.innerHTML = `
+      <div class="rs-info-cell">
+        <div class="rs-info-label">Account created</div>
+        <div class="rs-info-value">${createdText}</div>
+      </div>
+      <div class="rs-info-cell">
+        <div class="rs-info-label">Status</div>
+        <div class="rs-info-value blue">${statusText}</div>
+      </div>
+    `;
+
+    let anchor = info;
+
+    for (let i = 0; anchor && i < 3; i++) {
+      const r = anchor.getBoundingClientRect();
+      if (r.width > 160) break;
+      anchor = anchor.parentElement;
+    }
+
+    if (anchor) {
+      anchor.insertAdjacentElement("afterend", card);
+    } else {
+      info.insertAdjacentElement("afterend", card);
+    }
+  }
+
+  async function applyProfileStableFix() {
+    const username = usernameFromUrl();
+    if (!username) return;
+
+    let data;
+
+    try {
+      const res = await fetch("/api/profile/public/" + encodeURIComponent(username), {
+        credentials: "include",
+        headers: { "Accept": "application/json" }
+      });
+
+      if (!res.ok) return;
+
+      data = await res.json();
+    } catch {
+      return;
+    }
+
+    const created =
+      data.createdAt ||
+      data.CreatedAt ||
+      data.created ||
+      data.Created ||
+      data.memberSince ||
+      data.MemberSince;
+
+    const badges = Array.isArray(data.badges)
+      ? data.badges.map(x => String(x).toLowerCase())
+      : [];
+
+    const verified = !!(
+      data.verified ||
+      data.isVerified ||
+      data.IsVerified ||
+      badges.includes("verified") ||
+      String(data.status || "").toLowerCase() === "verified"
+    );
+
+    const createdText = formatDate(created);
+    const statusText = verified ? "Verified" : "Active";
+
+    hideUserNotFound();
+    hideOldInfoBits(createdText);
+    renderInfoCard(createdText, statusText);
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", applyProfileStableFix);
+  } else {
+    applyProfileStableFix();
+  }
+
+  setTimeout(applyProfileStableFix, 400);
+  setTimeout(applyProfileStableFix, 1000);
+  setTimeout(applyProfileStableFix, 1800);
+})();
+</script>
+
 </body>
 </html>

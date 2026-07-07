@@ -1,0 +1,249 @@
+/* ===== RunSpace Privacy Sidebar v3.1 ===== */
+
+.side {
+  position: fixed !important;
+  left: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  width: 240px !important;
+  height: 100vh !important;
+  padding: 24px 14px 96px !important;
+  box-sizing: border-box !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  background: rgba(5, 7, 14, 0.97) !important;
+  border-right: 1px solid rgba(255,255,255,.075) !important;
+  z-index: 100 !important;
+}
+
+.side-brand {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  margin-bottom: 34px !important;
+}
+
+.side-logo {
+  width: 34px !important;
+  height: 34px !important;
+  border-radius: 10px !important;
+  display: grid !important;
+  place-items: center !important;
+  background: linear-gradient(135deg, #4d7cff, #7657ff) !important;
+  color: #fff !important;
+  font-weight: 800 !important;
+  box-shadow: 0 12px 32px rgba(75,104,255,.35) !important;
+}
+
+.side-name {
+  color: rgba(255,255,255,.96) !important;
+  font-size: 16px !important;
+  font-weight: 800 !important;
+}
+
+.side-group-label {
+  margin: 18px 0 8px !important;
+  padding-left: 2px !important;
+  color: rgba(134,164,210,.78) !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  letter-spacing: .14em !important;
+  text-transform: uppercase !important;
+}
+
+.side-item {
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  min-height: 34px !important;
+  padding: 0 11px !important;
+  margin: 3px 0 !important;
+  border-radius: 9px !important;
+  color: rgba(142,166,205,.86) !important;
+  text-decoration: none !important;
+  font-size: 13px !important;
+  font-weight: 650 !important;
+}
+
+.side-item:hover {
+  background: rgba(74,109,255,.10) !important;
+  color: rgba(215,226,255,.98) !important;
+}
+
+.side-item.active {
+  background: rgba(41,93,255,.18) !important;
+  color: #5f8cff !important;
+}
+
+.side-item.active::before {
+  content: "" !important;
+  position: absolute !important;
+  left: -14px !important;
+  top: 8px !important;
+  bottom: 8px !important;
+  width: 3px !important;
+  border-radius: 999px !important;
+  background: #2f7cff !important;
+}
+
+.side-icon {
+  width: 16px !important;
+  height: 16px !important;
+  flex: 0 0 auto !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 1.9 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+.side-footer {
+  position: fixed !important;
+  left: 16px !important;
+  bottom: 14px !important;
+  width: 190px !important;
+  z-index: 9999 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  color: rgba(145,165,205,.72) !important;
+  font-size: 10.5px !important;
+  line-height: 1.3 !important;
+  letter-spacing: .02em !important;
+  pointer-events: none !important;
+}
+
+/* Keep privacy content away from fixed sidebar */
+body {
+  padding-left: 240px !important;
+  box-sizing: border-box !important;
+}
+
+/* If the page already uses its own wrapper, keep it readable */
+.policy-shell,
+.privacy-shell,
+.legal-shell,
+main {
+  max-width: none;
+}
+
+/* 100% zoom: make sidebar slightly tighter */
+@media (max-height: 820px) {
+  .side {
+    padding-top: 18px !important;
+    padding-bottom: 110px !important;
+  }
+
+  .side-brand {
+    margin-bottom: 26px !important;
+  }
+
+  .side-group-label {
+    margin: 14px 0 7px !important;
+  }
+
+  .side-item {
+    min-height: 31px !important;
+    font-size: 12.5px !important;
+  }
+}
+
+@media (max-width: 760px) {
+  body {
+    padding-left: 0 !important;
+  }
+
+  .side,
+  .side-footer {
+    display: none !important;
+  }
+}
+
+/* ===== Privacy content width/layout fix ===== */
+
+/* Sidebar occupies 240px. Content should start after it with real breathing room. */
+body {
+  padding-left: 240px !important;
+  box-sizing: border-box !important;
+  overflow-x: hidden !important;
+}
+
+/* Main legal content area */
+main,
+.policy-page,
+.policy-shell,
+.privacy-page,
+.privacy-shell,
+.legal-page,
+.legal-shell {
+  width: 100% !important;
+  max-width: none !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  box-sizing: border-box !important;
+}
+
+/* Give the legal page a proper readable rail */
+main {
+  padding-left: clamp(56px, 6vw, 96px) !important;
+  padding-right: clamp(32px, 5vw, 80px) !important;
+}
+
+/* Hero should not be squeezed */
+.policy-hero,
+.privacy-hero,
+.legal-hero,
+.hero {
+  max-width: 860px !important;
+  width: 100% !important;
+}
+
+/* Body text/list area should be readable, not a tiny column */
+.policy-body,
+.policy-content,
+.privacy-content,
+.legal-content {
+  max-width: 980px !important;
+  width: 100% !important;
+}
+
+/* Policy sections should stretch normally */
+.policy-section {
+  max-width: 980px !important;
+  width: 100% !important;
+}
+
+/* Fix narrow list items */
+.policy-list {
+  width: 100% !important;
+  max-width: 980px !important;
+}
+
+.policy-list-item {
+  width: 100% !important;
+  max-width: none !important;
+  display: grid !important;
+  grid-template-columns: 16px minmax(0, 1fr) !important;
+  gap: 14px !important;
+  align-items: start !important;
+}
+
+/* Make paragraph text readable */
+.policy-section p,
+.policy-list-item div,
+.policy-body p {
+  max-width: 860px !important;
+  line-height: 1.7 !important;
+}
+
+/* Mobile */
+@media (max-width: 760px) {
+  body {
+    padding-left: 0 !important;
+  }
+
+  main {
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+}

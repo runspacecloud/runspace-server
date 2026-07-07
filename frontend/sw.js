@@ -10,7 +10,7 @@
  * Bump CACHE_VERSION when you deploy to force clients to refresh.
  */
 
-const CACHE_VERSION = 'v1.0.4';
+const CACHE_VERSION = 'v1.0.6';
 const STATIC_CACHE = `runspace-static-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `runspace-runtime-${CACHE_VERSION}`;
 
@@ -32,8 +32,20 @@ const NEVER_CACHE = [
   '/api/',
   '/ws/',        // SignalR hub endpoints
   '/ws/chathub',     // SignalR main connection
+  '/hub/',
+  '/hubs/',
+  '/chatHub',
+  '/chathub',
+  '/uploads/',
+  '/files/',
   '/auth/',
   '/admin/',
+  '/profile/settings',
+  '/profile/settings/',
+  '/account',
+  '/account/',
+  '/encryption-reset',
+  '/encryption-reset/',
   '/security.html', // admin panel, always fresh
 ];
 

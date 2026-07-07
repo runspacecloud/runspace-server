@@ -1,51 +1,85 @@
-# Secrets
-*.env
-*.key
-cookies.txt
-sendgrid.env
-
-# Databases
-*.db
-*.sqlite
-runspace.db
-runspace.db.backup*
-
-# .NET build files
+# build
 bin/
 obj/
 publish/
+out/
+Debug/
+Release/
 
-# Python/cache
-__pycache__/
-*.pyc
-
-# Logs
-*.log
-logs/
-
-# Backups / broken files
-*.bak
-*.backup*
-*.broken
-Program.cs.bak*
-main.py.bak*
-
-# Local config
-appsettings.Development.json
+# local config / secrets
+.env
+.env.*
 appsettings.Production.json
-discord-bot/.venv/
-discord-bot/venv/
-discord-bot/.venv/
-discord-bot/venv/
-wwwroot/uploads/
-*.bak_*
-*.save
-*.ticket-backup
-*.fixbackup
-wwwroot/uploads/
-*.bak_*
-*.save
-*.ticket-backup
-*.fixbackup
-*.broken*
-appsettings.json
+appsettings.Local.json
+secrets.json
+*.pem
+*.key
+*.pfx
+*.crt
+*.cer
+
+# databases
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# logs / backups / archives
+*.log
+*.bak
+*.tar
+*.tar.gz
+*.zip
+backups/
+tmp/
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
+
+# local patch backups
+*.bak
+*.bak.*
+*.bak-*
+*.before-*
+*before-*
+frontend.bak.*/
+
+# Local secrets / production config
+.env
+.env.*
+appsettings.Production.json
+appsettings.*.local.json
+*.db
+*.sqlite
+*.sqlite3
+
+# Build output
+**/bin/
+**/obj/
+
+# Local backup/scratch files
+*.bak
+*.bak-*
+*.before-*
+.bak-*/
+*.tmp
+*.log
+
+# Local admin scripts
+reset_authuser_password_safe.sh
+
+# Backup folders / generated cleanup archives
+.bak-auth-cleanup/
+archive/
+frontend/music.before-react.*/
+
+# Local scratch/root leftovers
+Program.cs.before_*
+endpoints.txt
+
+# Release/build artifacts
+frontend/download/files/*.deb
+*.deb

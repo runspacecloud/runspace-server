@@ -22,8 +22,11 @@ public static class ServerChannels
             if (Perms.Deny(sid, u, ServerPerm.ManageChannels) is { } err) return err;
 
             var req  = await ctx.Request.ReadFromJsonAsync<CreateChannelReq>();
-            var name = InputSanitizer.SanitizeInput(
-                (req?.Name ?? "").Trim().ToLowerInvariant().Replace(' ', '-'), 32);
+            var rawName = req?.Name ?? "";
+            if (!DefensiveInput.IsSafeSlug(rawName, 2, 32))
+                return Results.BadRequest(new { message = "Ogiltigt kanalnamn." });
+
+            var name = DefensiveInput.CleanSlug(rawName, 32);
             if (name.Length < 2)
                 return Results.BadRequest(new { message = "Kanalnamn måste vara minst 2 tecken." });
             var type = (req?.Type ?? "text").ToLowerInvariant();
@@ -60,16 +63,22 @@ public static class ServerChannels
             if (req == null || string.IsNullOrWhiteSpace(req.Name))
                 return Results.BadRequest(new { message = "Namn krävs." });
 
+            var rawName = req.Name ?? "";
+            if (!DefensiveInput.IsSafeSlug(rawName, 2, 32))
+                return Results.BadRequest(new { message = "Ogiltigt kanalnamn." });
+
+            var name = DefensiveInput.CleanSlug(rawName, 32);
+
             using var db = DbHelpers.OpenDb();
             using var c = db.CreateCommand();
             c.CommandText = "UPDATE GroupChannels SET Name=$n WHERE GroupId=$g AND ChannelId=$cid";
-            c.Parameters.AddWithValue("$n",   InputSanitizer.SanitizeInput(req.Name.Trim(), 32));
+            c.Parameters.AddWithValue("$n",   name);
             c.Parameters.AddWithValue("$g",   sid);
             c.Parameters.AddWithValue("$cid", cid);
             var affected = c.ExecuteNonQuery();
             if (affected == 0) return Results.NotFound(new { message = "Kanal ej hittad." });
 
-            ServerDb.Audit(sid, u, "channel_renamed", cid, $"name={req.Name}");
+            ServerDb.Audit(sid, u, "channel_renamed", cid, $"name={name}");
             return Results.Ok(new { success = true });
         });
 

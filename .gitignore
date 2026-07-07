@@ -1,0 +1,34 @@
+# Secrets / local config
+.env
+.env.*
+appsettings.Production.json
+appsettings.*.local.json
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Build output
+**/bin/
+**/obj/
+
+# Logs / temp
+*.log
+*.tmp
+
+# Backups
+*.bak
+*.bak-*
+*.before-*
+.bak-*/
+archive/
+
+# Release artifacts
+*.deb
+
+# Editors
+.vscode/
+.idea/
+*.user
+*.suo

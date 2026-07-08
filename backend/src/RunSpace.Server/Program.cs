@@ -6331,7 +6331,7 @@ ServerApi.Register(app);
 // ═══════════════════════════════════════════════════════════════
 StripeConfiguration.ApiKey = Environment.GetEnvironmentVariable("STRIPE_SECRET_KEY");
 
-app.MapGet("/api/ping", () => Results.Ok(new { status = "ok", time = DateTime.UtcNow.ToString("o") }));
+app.MapSystemEndpoints();
 
 // ═══════════════════════════════════════════════
 // STRIPE PAYMENT ENDPOINTS

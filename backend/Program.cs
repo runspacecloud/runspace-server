@@ -73,8 +73,12 @@ builder.Services.AddSingleton<SessionAnomalyDetector>();
 builder.Services.AddSingleton<VoiceChannelManager>();
 builder.Services.AddHostedService<BehaviorRecoveryService>();
 builder.Services.AddHostedService<AuraScoreService>();
+builder.Services.AddHostedService<TempChatCleanupService>();
+builder.Services.AddHostedService<TemporaryAccountCleanupService>();
 builder.Services.AddSingleton<PresenceTracker>();
 builder.Services.AddSingleton<GroupVoiceManager>();
+builder.Services.AddSingleton<GroupDmVoiceManager>();
+builder.Services.AddSingleton<PrivateDmVoiceManager>();
 builder.Services.AddHttpClient();
 
 builder.Services
@@ -105,6 +109,150 @@ builder.Services
                     return;
                 }
 
+                var temporaryClaim =
+                    ctx.Principal
+                        ?.FindFirst(
+                            "temporary"
+                        )
+                        ?.Value
+                    ?? "";
+
+                if (
+                    temporaryClaim.Equals(
+                        "true",
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                )
+                {
+                    var expiryClaim =
+                        ctx.Principal
+                            ?.FindFirst(
+                                "temporary_expires_at"
+                            )
+                            ?.Value
+                        ?? "";
+
+                    var validExpiry =
+                        DateTime.TryParse(
+                            expiryClaim,
+                            null,
+                            System.Globalization
+                                .DateTimeStyles
+                                .RoundtripKind,
+                            out var temporaryExpiry
+                        );
+
+                    if (
+                        !validExpiry
+                        ||
+                        temporaryExpiry
+                            .ToUniversalTime()
+                        <= DateTime.UtcNow
+                    )
+                    {
+                        ctx.RejectPrincipal();
+
+                        await ctx.HttpContext
+                            .SignOutAsync(
+                                CookieAuthenticationDefaults
+                                    .AuthenticationScheme
+                            );
+
+                        return;
+                    }
+
+                    try
+                    {
+                        using var tempDb =
+                            DbHelpers.OpenDb();
+
+                        using var tempUser =
+                            tempDb.CreateCommand();
+
+                        tempUser.CommandText = @"
+                            SELECT COUNT(*)
+
+                            FROM AuthUsers
+
+                            WHERE
+                                LOWER(Username)
+                                    = LOWER($u)
+
+                                AND
+
+                                COALESCE(
+                                    IsTemporary,
+                                    0
+                                ) = 1
+
+                                AND
+
+                                TemporaryExpiresAt
+                                    <> ''
+
+                                AND
+
+                                TemporaryExpiresAt
+                                    > $now
+                        ";
+
+                        tempUser.Parameters
+                            .AddWithValue(
+                                "$u",
+                                username
+                            );
+
+                        tempUser.Parameters
+                            .AddWithValue(
+                                "$now",
+                                DateTime.UtcNow
+                                    .ToString("o")
+                            );
+
+                        var exists =
+                            Convert.ToInt32(
+                                tempUser
+                                    .ExecuteScalar()
+                            ) > 0;
+
+                        if (!exists)
+                        {
+                            ctx.RejectPrincipal();
+
+                            await ctx.HttpContext
+                                .SignOutAsync(
+                                    CookieAuthenticationDefaults
+                                        .AuthenticationScheme
+                                );
+
+                            return;
+                        }
+
+                        // Valid signed burner cookie,
+                        // active account and future expiry.
+                        return;
+                    }
+                    catch (
+                        Exception ex
+                    )
+                    {
+                        Console.WriteLine(
+                            "[TEMP COOKIE VALIDATION ERROR] "
+                            + ex
+                        );
+
+                        ctx.RejectPrincipal();
+
+                        await ctx.HttpContext
+                            .SignOutAsync(
+                                CookieAuthenticationDefaults
+                                    .AuthenticationScheme
+                            );
+
+                        return;
+                    }
+                }
+
                 try
                 {
                     using var db = DbHelpers.OpenDb();
@@ -112,7 +260,12 @@ builder.Services
 
                     using var cmd = db.CreateCommand();
                     cmd.CommandText = @"
-                        SELECT SecurityChangedAt, Status, COALESCE(IsSuspended,0)
+                        SELECT
+                            SecurityChangedAt,
+                            Status,
+                            COALESCE(IsSuspended,0),
+                            COALESCE(IsTemporary,0),
+                            COALESCE(TemporaryExpiresAt,'')
                         FROM AuthUsers
                         WHERE LOWER(Username)=LOWER($u)
                         LIMIT 1";
@@ -126,14 +279,70 @@ builder.Services
                         return;
                     }
 
-                    var securityChangedAt = r.IsDBNull(0) ? "" : r.GetString(0);
-                    var status = r.IsDBNull(1) ? "" : r.GetString(1);
-                    var isSuspended = !r.IsDBNull(2) && r.GetInt32(2) == 1;
+                    var securityChangedAt =
+                        r.IsDBNull(0)
+                            ? ""
+                            : r.GetString(0);
+
+                    var status =
+                        r.IsDBNull(1)
+                            ? ""
+                            : r.GetString(1);
+
+                    var isSuspended =
+                        !r.IsDBNull(2)
+                        &&
+                        r.GetInt32(2) == 1;
+
+                    var isTemporary =
+                        !r.IsDBNull(3)
+                        &&
+                        r.GetInt32(3) == 1;
+
+                    var temporaryExpiresAt =
+                        r.IsDBNull(4)
+                            ? ""
+                            : r.GetString(4);
 
                     if (status.Equals("banned", StringComparison.OrdinalIgnoreCase) || isSuspended)
                     {
                         ctx.RejectPrincipal();
                         await ctx.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                        return;
+                    }
+
+                    if (isTemporary)
+                    {
+                        var expiryValid =
+                            DateTime.TryParse(
+                                temporaryExpiresAt,
+                                null,
+                                System.Globalization.DateTimeStyles.RoundtripKind,
+                                out var temporaryExpiry
+                            );
+
+                        if (
+                            !expiryValid
+                            ||
+                            temporaryExpiry
+                                .ToUniversalTime()
+                            <= DateTime.UtcNow
+                        )
+                        {
+                            ctx.RejectPrincipal();
+
+                            await ctx.HttpContext
+                                .SignOutAsync(
+                                    CookieAuthenticationDefaults
+                                        .AuthenticationScheme
+                                );
+
+                            return;
+                        }
+
+                        // Active burner accounts use their own
+                        // fixed expiry and cannot access normal
+                        // account-security endpoints.
                         return;
                     }
 
@@ -172,7 +381,22 @@ builder.Services.AddCors(options =>
     });
 });
 
+// RUNSPACE TURNSTILE HTTP CLIENT
+builder.Services.AddHttpClient(
+    "turnstile",
+    client =>
+    {
+        client.Timeout =
+            TimeSpan.FromSeconds(8);
+    });
+
 var app = builder.Build();
+
+// RUNSPACE TURNSTILE REQUEST GUARD
+app.UseMiddleware<
+    RunSpace.Server.Security
+        .TurnstileRegistrationMiddleware>();
+
 
 
 // rs-safe-api-error-guard-v1
@@ -297,7 +521,7 @@ app.Use(async (ctx, next) =>
     ctx.Response.Headers["X-XSS-Protection"] = "1; mode=block";
     ctx.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
     ctx.Response.Headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=()";
-    ctx.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';";    
+    ctx.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self';";
     ctx.Response.Headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload";
     ctx.Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
     ctx.Response.Headers["Pragma"] = "no-cache";
@@ -410,7 +634,7 @@ app.UseDefaultFiles();
 app.Use(async (context, next) =>
 {
     await next();
-    
+
     var path = context.Request.Path.Value?.ToLower() ?? "";
     if (path.EndsWith(".html") || path == "/" || path == "/index" || path == "/login")
     {
@@ -436,6 +660,7 @@ app.UseStaticFiles(new StaticFileOptions
 });
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<TemporaryAccountRestrictionMiddleware>();
 
 // ═══════════════════════════════════════════════
 // AUTH ENDPOINTS
@@ -508,7 +733,7 @@ app.MapGet("/api/me", async (HttpContext ctx) =>
 {
     Console.WriteLine($"[/api/me] Called. IsAuthenticated: {ctx.User.Identity?.IsAuthenticated}, Name: {ctx.User.Identity?.Name}");
     // Defensive logging rule: never log cookie values, auth tokens, secrets, private keys or passwords.
-    
+
     if (ctx.User.Identity?.IsAuthenticated != true)
     {
         Console.WriteLine("[/api/me] NOT AUTHENTICATED - returning 401");
@@ -814,7 +1039,7 @@ app.MapPost("/api/auth/register", async (HttpContext ctx, IHttpClientFactory htt
     using var ins = db.CreateCommand();
     ins.CommandText = @"INSERT INTO AuthUsers (Username,PasswordHash,Bio,AvatarUrl,CreatedAt,Status,Badges,PublicKey,TwoFactorEnabled,TwoFactorSecret,PasswordChangedAt,LoginCount,LastLoginAt,LastLoginIp,AccountLockedUntil,Email,PublicId)
         VALUES ($u,$p,'','', $t,'pending','[]','',0,'',$t,0,'','','',$e,lower(hex(randomblob(16))))";
-    
+
     ins.Parameters.AddWithValue("$u", username); ins.Parameters.AddWithValue("$p", hash); ins.Parameters.AddWithValue("$t", now); ins.Parameters.AddWithValue("$e", email);
     ins.ExecuteNonQuery();
     PasswordHistory.Save(username, hash);
@@ -967,7 +1192,7 @@ app.MapPost("/api/auth/login", async (HttpContext ctx) =>
     var claims = new List<Claim> { new(ClaimTypes.Name, username), new(ClaimTypes.NameIdentifier, username) };
     var props = new AuthenticationProperties { IsPersistent = true, ExpiresUtc = DateTimeOffset.UtcNow.AddDays(7), IssuedUtc = DateTimeOffset.UtcNow };
     await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)), props);
-    
+
     // Sätt HttpOnly device-trust cookie – backend är ensam källa till trusted status
     var deviceToken = DefensiveInput.CleanString(ctx.Request.Headers["X-Device-Token"].FirstOrDefault(), 256);
     if (!string.IsNullOrWhiteSpace(deviceToken) && DefensiveInput.IsSafeToken(deviceToken, 256)) {
@@ -1178,14 +1403,14 @@ app.MapPost("/api/auth/verify-otp", async (HttpContext ctx) =>
     var identity = new System.Security.Claims.ClaimsIdentity(new[] { new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.Name, username) }, "cookie");
     var principal = new System.Security.Claims.ClaimsPrincipal(identity);
     await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal, new Microsoft.AspNetCore.Authentication.AuthenticationProperties { IsPersistent = true, ExpiresUtc = DateTimeOffset.UtcNow.AddDays(30) });
-    
+
     // Create PersistentSession after OTP verification
     // Wait a bit for cookie to be set by SignInAsync
     await Task.Delay(100);
     var sessionId = ctx.Request.Cookies[".AspNetCore.Cookies"] ?? ctx.Request.Cookies["runspace_auth_v3"] ?? Guid.NewGuid().ToString("N");
     var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
     var userAgent = DefensiveInput.CleanString(ctx.Request.Headers["User-Agent"].ToString(), 512);
-    
+
     using (var sessConn = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db"))
     {
         await sessConn.OpenAsync();
@@ -1201,7 +1426,7 @@ app.MapPost("/api/auth/verify-otp", async (HttpContext ctx) =>
         sessCmd.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("o"));
         await sessCmd.ExecuteNonQueryAsync();
     }
-    
+
     AppHelpers.LogActivity(username, "verify_email", "OTP verified");
     return Results.Ok(new { status = "ok", redirect = "/chatt" });
 });
@@ -2004,222 +2229,7 @@ app.MapPost("/api/reports", async (HttpContext ctx) =>
 // ═══════════════════════════════════════════════
 
 // ACCOUNT E2EE KEYS
-// Stores encrypted account private-key envelopes for cross-device cloud sync.
-// The server stores ciphertext only.
-app.MapGet("/api/e2ee/account-key", (HttpContext ctx) =>
-{
-    var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
-
-    using var db = DbHelpers.OpenDb();
-    using var cmd = db.CreateCommand();
-    cmd.CommandText = @"
-SELECT PublicKey, EncryptedPrivateKey, Salt, Nonce, Kdf, Iterations, Version, CreatedAt, UpdatedAt
-FROM AccountE2eeKeys
-WHERE Username=$u
-LIMIT 1";
-    cmd.Parameters.AddWithValue("$u", u);
-
-    using var r = cmd.ExecuteReader();
-    if (!r.Read())
-    {
-        return Results.Ok(new { exists = false, username = u });
-    }
-
-    return Results.Ok(new
-    {
-        exists = true,
-        username = u,
-        publicKey = r.GetString(0),
-        encryptedPrivateKey = r.GetString(1),
-        salt = r.GetString(2),
-        nonce = r.GetString(3),
-        kdf = r.GetString(4),
-        iterations = r.GetInt32(5),
-        version = r.GetInt32(6),
-        createdAt = r.GetString(7),
-        updatedAt = r.GetString(8)
-    });
-});
-
-app.MapGet("/api/e2ee/account-public-key/{username}", (string username, HttpContext ctx) =>
-{
-    if (ctx.User.Identity?.IsAuthenticated != true) return Results.Unauthorized();
-
-    var t = (username ?? "").Trim().ToLowerInvariant();
-    if (!AppHelpers.IsValidUsername(t) || !AppHelpers.UserExists(t))
-        return Results.NotFound(new { exists = false, message = "User not found" });
-
-    using var db = DbHelpers.OpenDb();
-    using var cmd = db.CreateCommand();
-    cmd.CommandText = @"
-SELECT PublicKey, UpdatedAt
-FROM AccountE2eeKeys
-WHERE Username=$u
-LIMIT 1";
-    cmd.Parameters.AddWithValue("$u", t);
-
-    using var r = cmd.ExecuteReader();
-    if (!r.Read())
-    {
-        return Results.Ok(new { exists = false, username = t, publicKey = "" });
-    }
-
-    return Results.Ok(new
-    {
-        exists = true,
-        username = t,
-        publicKey = r.GetString(0),
-        updatedAt = r.GetString(1)
-    });
-});
-
-app.MapPost("/api/e2ee/account-key", async (HttpContext ctx) =>
-{
-    var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
-
-    System.Text.Json.JsonElement body;
-    try
-    {
-        using var doc = await System.Text.Json.JsonDocument.ParseAsync(ctx.Request.Body);
-        body = doc.RootElement.Clone();
-    }
-    catch
-    {
-        return Results.BadRequest(new { message = "Invalid JSON" });
-    }
-
-    if (body.ValueKind != System.Text.Json.JsonValueKind.Object)
-        return Results.BadRequest(new { message = "Invalid JSON" });
-
-    string ReadString(string name)
-    {
-        if (!body.TryGetProperty(name, out var p)) return "";
-        if (p.ValueKind != System.Text.Json.JsonValueKind.String) return "";
-        return (p.GetString() ?? "").Trim();
-    }
-
-    int ReadInt(string name, int fallback)
-    {
-        if (!body.TryGetProperty(name, out var p)) return fallback;
-        if (p.ValueKind != System.Text.Json.JsonValueKind.Number) return fallback;
-        return p.TryGetInt32(out var n) ? n : fallback;
-    }
-
-    var publicKey = ReadString("publicKey");
-    var encryptedPrivateKey = ReadString("encryptedPrivateKey");
-    var salt = ReadString("salt");
-    var nonce = ReadString("nonce");
-    var kdf = ReadString("kdf");
-    var iterations = ReadInt("iterations", 310000);
-    var version = ReadInt("version", 1);
-
-    var isReset = false;
-    if (body.TryGetProperty("reset", out var resetProp) &&
-        resetProp.ValueKind == System.Text.Json.JsonValueKind.True)
-    {
-        isReset = true;
-    }
-
-    if (string.IsNullOrWhiteSpace(kdf)) kdf = "PBKDF2-SHA256";
-
-    // rs-e2ee-account-key-defensive-v1
-    // Store ciphertext only, but still reject malformed/oversized envelopes before DB.
-    var allowedKdfs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-    {
-        "PBKDF2-SHA256",
-        "ARGON2ID",
-        "SCRYPT"
-    };
-
-    if (publicKey.Length < 64 || publicKey.Length > 8192 || publicKey.Contains('\0'))
-        return Results.BadRequest(new { message = "Invalid publicKey" });
-
-    if (encryptedPrivateKey.Length < 64 || encryptedPrivateKey.Length > 65536 || encryptedPrivateKey.Contains('\0'))
-        return Results.BadRequest(new { message = "Invalid encryptedPrivateKey" });
-
-    if (!DefensiveInput.IsSafeBase64ish(salt, 2048) || salt.Length < 8)
-        return Results.BadRequest(new { message = "Invalid salt" });
-
-    if (!DefensiveInput.IsSafeBase64ish(nonce, 2048) || nonce.Length < 8)
-        return Results.BadRequest(new { message = "Invalid nonce" });
-
-    if (kdf.Length > 64 || kdf.Contains('\0') || !allowedKdfs.Contains(kdf))
-        return Results.BadRequest(new { message = "Invalid kdf" });
-
-    if (iterations < 100000 || iterations > 2000000)
-        return Results.BadRequest(new { message = "Invalid iterations" });
-
-    if (version < 1 || version > 20)
-        return Results.BadRequest(new { message = "Invalid version" });
-
-    var now = DateTime.UtcNow.ToString("o");
-
-    using var db = DbHelpers.OpenDb();
-    using var cmd = db.CreateCommand();
-    cmd.CommandText = @"
-INSERT INTO AccountE2eeKeys
-  (Username, PublicKey, EncryptedPrivateKey, Salt, Nonce, Kdf, Iterations, Version, CreatedAt, UpdatedAt)
-VALUES
-  ($u, $pub, $priv, $salt, $nonce, $kdf, $iter, $ver, $now, $now)
-ON CONFLICT(Username) DO UPDATE SET
-  PublicKey=excluded.PublicKey,
-  EncryptedPrivateKey=excluded.EncryptedPrivateKey,
-  Salt=excluded.Salt,
-  Nonce=excluded.Nonce,
-  Kdf=excluded.Kdf,
-  Iterations=excluded.Iterations,
-  Version=excluded.Version,
-  UpdatedAt=excluded.UpdatedAt";
-    cmd.Parameters.AddWithValue("$u", u);
-    cmd.Parameters.AddWithValue("$pub", publicKey);
-    cmd.Parameters.AddWithValue("$priv", encryptedPrivateKey);
-    cmd.Parameters.AddWithValue("$salt", salt);
-    cmd.Parameters.AddWithValue("$nonce", nonce);
-    cmd.Parameters.AddWithValue("$kdf", kdf);
-    cmd.Parameters.AddWithValue("$iter", iterations);
-    cmd.Parameters.AddWithValue("$ver", version);
-    cmd.Parameters.AddWithValue("$now", now);
-    cmd.ExecuteNonQuery();
-
-    if (isReset)
-    {
-        DbHelpers.EnsureColumn(db, "AuthUsers", "SecurityChangedAt", "TEXT NOT NULL DEFAULT ''");
-
-        using var sec = db.CreateCommand();
-        sec.CommandText = "UPDATE AuthUsers SET SecurityChangedAt=$sc WHERE Username=$u";
-        sec.Parameters.AddWithValue("$sc", now);
-        sec.Parameters.AddWithValue("$u", u);
-        sec.ExecuteNonQuery();
-
-        using var del = db.CreateCommand();
-        del.CommandText = "DELETE FROM UserDeviceKeys WHERE Username=$u";
-        del.Parameters.AddWithValue("$u", u);
-        del.ExecuteNonQuery();
-
-        using var ps = db.CreateCommand();
-        ps.CommandText = "DELETE FROM PersistentSessions WHERE LOWER(Username)=LOWER($u)";
-        ps.Parameters.AddWithValue("$u", u);
-        ps.ExecuteNonQuery();
-
-        try { ctx.RequestServices.GetRequiredService<SessionManager>().InvalidateAllSessions(u); } catch { }
-
-        try { await ctx.SignOutAsync(); } catch { }
-
-        ctx.Response.Cookies.Delete("runspace_auth_v3");
-        ctx.Response.Cookies.Delete("runspace_auth_v2");
-        ctx.Response.Cookies.Delete("runspace_auth");
-        ctx.Response.Cookies.Delete("rs-dt");
-
-        AppHelpers.LogActivity(u, "e2ee_passphrase_reset", $"From {ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown"}");
-
-        return Results.Ok(new { success = true, username = u, updatedAt = now, reset = true, signedOut = true });
-    }
-
-    return Results.Ok(new { success = true, username = u, updatedAt = now });
-});
-
+app.MapE2eeRoutes();
 
 app.MapPost("/api/chat/public-key", async (HttpContext ctx) =>
 {
@@ -2439,9 +2449,107 @@ app.MapPost("/api/chat/upload-image", async (HttpContext ctx) =>
         _evc2.ExecuteNonQuery();
         return Results.Json(new { error = "Filinnehållet matchar inte bildformatet." }, statusCode: 422);
     }
+    // Privacy-first default: remove metadata unless the client explicitly sends false.
+    var removeMetadataRaw = form["removeMetadata"].FirstOrDefault();
+    var removeMetadata = !string.Equals(
+        removeMetadataRaw,
+        "false",
+        StringComparison.OrdinalIgnoreCase
+    );
+
     var fn = $"{Convert.ToHexString(RandomNumberGenerator.GetBytes(16))}{ext}";
     var path = Path.Combine(AppConfig.ChatUploadDir, fn);
-    await using (var s = System.IO.File.Create(path)) await file.CopyToAsync(s);
+
+    await using (var s = System.IO.File.Create(path))
+        await file.CopyToAsync(s);
+
+    if (removeMetadata)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "/usr/bin/exiftool",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            // ArgumentList avoids shell parsing and command injection.
+            psi.ArgumentList.Add("-all=");
+            psi.ArgumentList.Add("-overwrite_original");
+            psi.ArgumentList.Add(path);
+
+            using var process = new System.Diagnostics.Process
+            {
+                StartInfo = psi
+            };
+
+            if (!process.Start())
+                throw new InvalidOperationException("ExifTool could not be started.");
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+            try
+            {
+                await process.WaitForExitAsync(timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Process may already have exited.
+                }
+
+                throw new TimeoutException("ExifTool timed out.");
+            }
+
+            var exifOutput = await stdoutTask;
+            var exifError = await stderrTask;
+
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"ExifTool failed with exit code {process.ExitCode}: {exifError}"
+                );
+            }
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                if (System.IO.File.Exists(path))
+                    System.IO.File.Delete(path);
+            }
+            catch
+            {
+                // Do not mask the original metadata-removal error.
+            }
+
+            Console.Error.WriteLine(
+                $"[chat-upload] Metadata removal failed for user={u}: {ex.Message}"
+            );
+
+            return Results.Json(
+                new
+                {
+                    error = "Bilden kunde inte rensas från metadata."
+                },
+                statusCode: 500
+            );
+        }
+    }
+
+    var storedSize = new FileInfo(path).Length;
+
     // Log successful upload
     using (var _db4 = DbHelpers.OpenDb()) {
         using var _ulc = _db4.CreateCommand();
@@ -2449,11 +2557,11 @@ app.MapPost("/api/chat/upload-image", async (HttpContext ctx) =>
             SELECT Id, $orig, $stored, $ct, $size, $ext, 'ok',  datetime('now') FROM AuthUsers WHERE Username=$u";
         _ulc.Parameters.AddWithValue("$orig", originalName.Length > 255 ? originalName[..255] : originalName);
         _ulc.Parameters.AddWithValue("$stored", fn); _ulc.Parameters.AddWithValue("$ct", file.ContentType ?? "image");
-        _ulc.Parameters.AddWithValue("$size", file.Length); _ulc.Parameters.AddWithValue("$ext", ext);
+        _ulc.Parameters.AddWithValue("$size", storedSize); _ulc.Parameters.AddWithValue("$ext", ext);
         _ulc.Parameters.AddWithValue("$ip", _ip); _ulc.Parameters.AddWithValue("$u", u);
         _ulc.ExecuteNonQuery();
     }
-    return Results.Ok(new { success = true, imageUrl = $"/uploads/chat/{fn}", fileName = fn, size = file.Length });
+    return Results.Ok(new { success = true, imageUrl = $"/uploads/chat/{fn}", fileName = fn, size = storedSize, metadataRemoved = removeMetadata });
 }).DisableAntiforgery();
 
 app.MapPost("/api/chat/upload-file", async (HttpContext ctx) =>
@@ -2474,14 +2582,34 @@ app.MapPost("/api/chat/upload-file", async (HttpContext ctx) =>
     int _uploadLimit2 = _trustLevel2 == "high" ? 20 : 5;
     bool _isAdmin2; using (var _adb2 = DbHelpers.OpenDb()) { using var _ac2 = _adb2.CreateCommand(); _ac2.CommandText = "SELECT IsAdmin FROM AuthUsers WHERE Username=$u"; _ac2.Parameters.AddWithValue("$u", u); var _ar2 = _ac2.ExecuteScalar(); _isAdmin2 = _ar2 != null && Convert.ToInt32(_ar2) == 1; } if (!_isAdmin2 && !limiter2.IsAllowed(u, "chat_upload_file", _uploadLimit2, 3600)) return Results.Json(new { error = "Rate limit för uppladdningar." }, statusCode: 429);
     if (!ctx.Request.HasFormContentType) return Results.BadRequest(new { error = "form-data" });
-    var form = await ctx.Request.ReadFormAsync(); var file = form.Files["file"];
-    if (file == null || file.Length == 0) return Results.BadRequest(new { error = "Fil saknas." });
+    var form = await ctx.Request.ReadFormAsync();
+
+    // Accept the multipart file even if an older client
+    // used another field name.
+    var file = form.Files["file"];
+
+    if (file is null && form.Files.Count > 0)
+        file = form.Files[0];
+
+    if (file is null || file.Length == 0)
+        return Results.BadRequest(new
+        {
+            error = "Ingen fil mottogs."
+        });
 
     // rs-safe-filename-chat-upload-file-v1
     // Never store or echo raw client-provided filenames.
     var originalName = DefensiveInput.SafeFileName(file.FileName);
-    long _maxSize2 = _trustLevel2 == "high" ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
-    if (file.Length > _maxSize2) return Results.Json(new { error = $"Max {_maxSize2/1024/1024} MB för din trust-nivå." }, statusCode: 422);
+    const long _maxSize2 = 20L * 1024 * 1024;
+
+    if (file.Length > _maxSize2)
+        return Results.Json(
+            new
+            {
+                error = "Filen får vara högst 20 MB."
+            },
+            statusCode: 422
+        );
     var ext2 = Path.GetExtension(originalName).ToLowerInvariant();
     // Comprehensive block list
     var blocked2 = new HashSet<string> { ".exe",".bat",".cmd",".msi",".scr",".ps1",".psm1",".vbs",".js",".jsx",
@@ -2489,7 +2617,19 @@ app.MapPost("/api/chat/upload-file", async (HttpContext ctx) =>
         ".app",".apk",".ipa",".deb",".rpm",".html",".htm",".svg",".xml",".xhtml",
         ".lnk",".scr",".pif",".com",".hta",".sh",".bash",".zsh",".fish" };
     // Whitelist approach — only allow known safe types
-    var allowed2 = new HashSet<string> { ".png",".jpg",".jpeg",".gif",".webp",".pdf",".txt",".md",".zip",".mp4",".mp3",".wav",".ogg" };
+    var allowed2 = new HashSet<string>
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".webp",
+        ".pdf", ".txt", ".md", ".zip",
+
+        // Audio
+        ".mp3", ".wav", ".ogg", ".oga",
+        ".m4a", ".aac", ".flac",
+
+        // Video
+        ".mp4", ".webm", ".mov",
+        ".m4v", ".ogv"
+    };
     if (!allowed2.Contains(ext2)) {
         using var _db3 = DbHelpers.OpenDb();
         using var _evc2 = _db3.CreateCommand();
@@ -3112,6 +3252,12 @@ app.MapPost("/api/friends/block", async (HttpContext ctx) =>
     return Results.Ok(new { ok = true, status = "blocked", username = target });
 }).RequireAuthorization();
 
+
+TempChatEndpoints.Register(app);
+TemporaryAccountEndpoints.Register(app);
+TempChatFriendInvites.Register(app);
+GroupDmEndpoints.Register(app);
+GroupDmVoiceEndpoints.Register(app);
 
 app.MapPost("/api/chat/send", async (HttpContext ctx, IHubContext<ChatHub> hub) =>
 {
@@ -6149,7 +6295,7 @@ app.MapPatch("/api/admin/support/ticket/{ticketId}/status", async (string ticket
     var body = await ctx.Request.ReadFromJsonAsync<Dictionary<string, string>>();
     var status = body?.GetValueOrDefault("status", "open") ?? "open";
     if (!new[] { "open", "pending", "closed" }.Contains(status)) return Results.BadRequest(new { message = "Invalid status" });
-    
+
     using var db = DbHelpers.OpenDb();
     using var cmd = db.CreateCommand();
     cmd.CommandText = "UPDATE SupportTickets SET Status=$s WHERE TicketId=$tid";
@@ -6446,6 +6592,10 @@ app.MapPost("/api/admin/clear-encrypted-messages", async (HttpContext ctx) =>
 
 ServerApi.Register(app);
 
+GroupInviteLinks.Register(app);
+
+ChatReadRoutes.Register(app);
+
 // ═══════════════════════════════════════════════════════════════
 // STRIPE CONFIGURATION
 // ═══════════════════════════════════════════════════════════════
@@ -6462,7 +6612,7 @@ app.MapPost("/api/stripe/checkout/spacerium", async (HttpContext ctx) =>
     var user = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(user) || !AppHelpers.UserExists(user))
         return Results.Unauthorized();
-    
+
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
     var plan = "monthly";
@@ -6470,10 +6620,10 @@ app.MapPost("/api/stripe/checkout/spacerium", async (HttpContext ctx) =>
         var json = System.Text.Json.JsonDocument.Parse(body).RootElement;
         plan = json.TryGetProperty("plan", out var p) ? p.GetString() ?? "monthly" : "monthly";
     } catch { }
-    
+
     var priceAmount = plan == "yearly" ? 7900L : 900L;
     var interval = plan == "yearly" ? "year" : "month";
-    
+
     var options = new SessionCreateOptions
     {
         PaymentMethodTypes = new List<string> { "card" },
@@ -6506,7 +6656,7 @@ app.MapPost("/api/stripe/checkout/spacerium", async (HttpContext ctx) =>
             { "plan", plan }
         }
     };
-    
+
     var service = new SessionService();
     var session = await service.CreateAsync(options);
     return Results.Ok(new { url = session.Url });
@@ -6516,7 +6666,7 @@ app.MapPost("/api/stripe/checkout/script", async (HttpContext ctx) =>
 {
     var marketUser = MarketHelpers.GetMarketUser(ctx);
     if (marketUser == null) return Results.Unauthorized();
-    
+
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
     long scriptId = 0;
@@ -6524,25 +6674,25 @@ app.MapPost("/api/stripe/checkout/script", async (HttpContext ctx) =>
         var json = System.Text.Json.JsonDocument.Parse(body).RootElement;
         scriptId = json.TryGetProperty("scriptId", out var s) ? s.GetInt64() : 0;
     } catch { }
-    
+
     if (scriptId == 0) return Results.BadRequest(new { error = "scriptId required" });
-    
+
     using var db = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     db.Open();
-    
+
     using var cmd = db.CreateCommand();
     cmd.CommandText = "SELECT Name, Price, CreatorUsername FROM MarketScripts WHERE Id=$id AND Status='approved'";
     cmd.Parameters.AddWithValue("$id", scriptId);
     using var r = cmd.ExecuteReader();
     if (!r.Read()) return Results.NotFound(new { error = "Script not found" });
-    
+
     var name = r.GetString(0);
     var price = r.GetInt32(1);
     var creator = r.GetString(2);
     r.Close();
-    
+
     if (price == 0) return Results.BadRequest(new { error = "Script is free" });
-    
+
     var options = new SessionCreateOptions
     {
         PaymentMethodTypes = new List<string> { "card" },
@@ -6575,7 +6725,7 @@ app.MapPost("/api/stripe/checkout/script", async (HttpContext ctx) =>
             { "buyerUsername", marketUser.Value.username }
         }
     };
-    
+
     var service = new SessionService();
     var session = await service.CreateAsync(options);
     return Results.Ok(new { url = session.Url });
@@ -6585,20 +6735,20 @@ app.MapPost("/api/stripe/webhook", async (HttpContext ctx) =>
 {
     var json = await new StreamReader(ctx.Request.Body).ReadToEndAsync();
     var webhookSecret = Environment.GetEnvironmentVariable("STRIPE_WEBHOOK_SECRET");
-    
+
     Event stripeEvent;
     try {
         stripeEvent = EventUtility.ConstructEvent(json, ctx.Request.Headers["Stripe-Signature"], webhookSecret);
     } catch {
         return Results.BadRequest(new { error = "Invalid signature" });
     }
-    
+
     if (stripeEvent.Type == "checkout.session.completed")
     {
         var session = stripeEvent.Data.Object as Session;
         if (session?.Metadata == null) return Results.Ok();
         var type = session.Metadata.GetValueOrDefault("type", "");
-        
+
         if (type == "spacerium")
         {
             var username = session.Metadata["username"];
@@ -6629,23 +6779,23 @@ app.MapPost("/api/spaces", async (HttpContext ctx) =>
 {
     var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(username) || !AppHelpers.UserExists(username)) return Results.Unauthorized();
-    
+
     var body = await ctx.Request.ReadFromJsonAsync<Dictionary<string, string>>();
     var name = body?.GetValueOrDefault("name", "")?.Trim() ?? "";
     var description = body?.GetValueOrDefault("description", "")?.Trim() ?? "";
-    
+
     if (string.IsNullOrWhiteSpace(name) || name.Length < 2 || name.Length > 50)
         return Results.BadRequest(new { error = "Name must be 2-50 characters" });
-    
+
     var publicId = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(4)).ToLower();
-    
+
     using var db = DbHelpers.OpenDb();
-    
+
     using var userCmd = db.CreateCommand();
     userCmd.CommandText = "SELECT Id FROM AuthUsers WHERE Username=$u";
     userCmd.Parameters.AddWithValue("$u", username);
     var userId = Convert.ToInt64(userCmd.ExecuteScalar());
-    
+
     using var cmd = db.CreateCommand();
     cmd.CommandText = @"INSERT INTO Spaces (PublicId, Name, Description, OwnerId, CreatedAt, MemberCount)
         VALUES ($pid, $name, $desc, $uid, datetime('now'), 1)";
@@ -6654,20 +6804,20 @@ app.MapPost("/api/spaces", async (HttpContext ctx) =>
     cmd.Parameters.AddWithValue("$desc", InputSanitizer.SanitizeInput(description, 200));
     cmd.Parameters.AddWithValue("$uid", userId);
     cmd.ExecuteNonQuery();
-    
+
     var spaceId = Convert.ToInt64(new SqliteCommand("SELECT last_insert_rowid()", db).ExecuteScalar());
-    
+
     using var memCmd = db.CreateCommand();
     memCmd.CommandText = "INSERT INTO SpaceMembers (SpaceId, UserId, Role, JoinedAt) VALUES ($sid, $uid, 'owner', datetime('now'))";
     memCmd.Parameters.AddWithValue("$sid", spaceId);
     memCmd.Parameters.AddWithValue("$uid", userId);
     memCmd.ExecuteNonQuery();
-    
+
     using var chCmd = db.CreateCommand();
     chCmd.CommandText = "INSERT INTO SpaceChannels (SpaceId, Name, Type, Position, CreatedAt) VALUES ($sid, 'general', 'text', 0, datetime('now'))";
     chCmd.Parameters.AddWithValue("$sid", spaceId);
     chCmd.ExecuteNonQuery();
-    
+
     return Results.Ok(new { id = spaceId, publicId, name, message = "Space created!" });
 });
 
@@ -6676,7 +6826,7 @@ app.MapGet("/api/spaces", (HttpContext ctx) =>
 {
     var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(username) || !AppHelpers.UserExists(username)) return Results.Unauthorized();
-    
+
     using var db = DbHelpers.OpenDb();
     using var cmd = db.CreateCommand();
     cmd.CommandText = @"SELECT s.Id, s.PublicId, s.Name, s.Description, s.IconUrl, s.MemberCount, sm.Role, s.OwnerId,
@@ -6687,7 +6837,7 @@ app.MapGet("/api/spaces", (HttpContext ctx) =>
         WHERE u.Username = $u
         ORDER BY s.Name";
     cmd.Parameters.AddWithValue("$u", username);
-    
+
     using var r = cmd.ExecuteReader();
     var spaces = new List<object>();
     while (r.Read()) {
@@ -6705,7 +6855,7 @@ app.MapGet("/api/spaces/{publicId}", (string publicId, HttpContext ctx) =>
 {
     var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(username)) return Results.Unauthorized();
-    
+
     using var db = DbHelpers.OpenDb();
     using var memCheck = db.CreateCommand();
     memCheck.CommandText = @"SELECT sm.Role FROM SpaceMembers sm JOIN Spaces s ON s.Id = sm.SpaceId JOIN AuthUsers u ON u.Id = sm.UserId WHERE s.PublicId = $pid AND u.Username = $u";
@@ -6713,7 +6863,7 @@ app.MapGet("/api/spaces/{publicId}", (string publicId, HttpContext ctx) =>
     memCheck.Parameters.AddWithValue("$u", username);
     var role = memCheck.ExecuteScalar() as string;
     if (role == null) return Results.Json(new { error = "Not a member" }, statusCode: 403);
-    
+
     using var cmd = db.CreateCommand();
     cmd.CommandText = @"SELECT s.Id, s.PublicId, s.Name, s.Description, s.IconUrl, s.MemberCount, s.OwnerId, s.CreatedAt, (SELECT Username FROM AuthUsers WHERE Id = s.OwnerId) FROM Spaces s WHERE s.PublicId = $pid";
     cmd.Parameters.AddWithValue("$pid", publicId);
@@ -6721,7 +6871,7 @@ app.MapGet("/api/spaces/{publicId}", (string publicId, HttpContext ctx) =>
     if (!r.Read()) return Results.NotFound();
     var space = new { id = r.GetInt64(0), publicId = r.GetString(1), name = r.GetString(2), description = r.IsDBNull(3) ? "" : r.GetString(3), iconUrl = r.IsDBNull(4) ? "" : r.GetString(4), memberCount = r.GetInt32(5), ownerId = r.GetInt64(6), createdAt = r.GetString(7), ownerName = r.GetString(8), myRole = role };
     r.Close();
-    
+
     using var chCmd = db.CreateCommand();
     chCmd.CommandText = "SELECT Id, Name, Type, Position FROM SpaceChannels WHERE SpaceId = (SELECT Id FROM Spaces WHERE PublicId=$pid) ORDER BY Position";
     chCmd.Parameters.AddWithValue("$pid", publicId);
@@ -6830,7 +6980,7 @@ app.MapGet("/api/spaces/{publicId}/channels/{channelId}/messages", (string publi
     if (memCheck.ExecuteScalar() == null) return Results.Json(new { error = "Not a member" }, statusCode: 403);
     var take = Math.Min(limit ?? 50, 100);
     using var cmd = db.CreateCommand();
-    cmd.CommandText = before.HasValue 
+    cmd.CommandText = before.HasValue
         ? "SELECT m.Id, m.Content, m.CreatedAt, m.EditedAt, u.Username, u.AvatarUrl FROM SpaceMessages m JOIN AuthUsers u ON u.Id = m.UserId WHERE m.ChannelId = $cid AND m.Id < $before ORDER BY m.Id DESC LIMIT $limit"
         : "SELECT m.Id, m.Content, m.CreatedAt, m.EditedAt, u.Username, u.AvatarUrl FROM SpaceMessages m JOIN AuthUsers u ON u.Id = m.UserId WHERE m.ChannelId = $cid ORDER BY m.Id DESC LIMIT $limit";
     cmd.Parameters.AddWithValue("$cid", channelId);
@@ -6969,37 +7119,37 @@ app.MapDelete("/api/spaces/{publicId}/channels/{channelId}", (string publicId, l
     var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(username)) return Results.Unauthorized();
     using var db = DbHelpers.OpenDb();
-    
+
     // Check permission (owner/admin only)
     using var roleCheck = db.CreateCommand();
-    roleCheck.CommandText = @"SELECT sm.Role FROM SpaceMembers sm 
-        JOIN Spaces s ON s.Id = sm.SpaceId 
-        JOIN AuthUsers u ON u.Id = sm.UserId 
+    roleCheck.CommandText = @"SELECT sm.Role FROM SpaceMembers sm
+        JOIN Spaces s ON s.Id = sm.SpaceId
+        JOIN AuthUsers u ON u.Id = sm.UserId
         WHERE s.PublicId = $pid AND u.Username = $u";
     roleCheck.Parameters.AddWithValue("$pid", publicId);
     roleCheck.Parameters.AddWithValue("$u", username);
     var role = roleCheck.ExecuteScalar() as string;
     if (role != "owner" && role != "admin") return Results.Json(new { error = "No permission" }, statusCode: 403);
-    
+
     // Check channel count (can't delete last channel)
     using var countCmd = db.CreateCommand();
     countCmd.CommandText = "SELECT COUNT(*) FROM SpaceChannels WHERE SpaceId = (SELECT Id FROM Spaces WHERE PublicId = $pid)";
     countCmd.Parameters.AddWithValue("$pid", publicId);
-    if (Convert.ToInt64(countCmd.ExecuteScalar()) <= 1) 
+    if (Convert.ToInt64(countCmd.ExecuteScalar()) <= 1)
         return Results.BadRequest(new { error = "Cannot delete the last channel" });
-    
+
     // Delete messages first
     using var delMsgs = db.CreateCommand();
     delMsgs.CommandText = "DELETE FROM SpaceMessages WHERE ChannelId = $cid";
     delMsgs.Parameters.AddWithValue("$cid", channelId);
     delMsgs.ExecuteNonQuery();
-    
+
     // Delete channel
     using var delCh = db.CreateCommand();
     delCh.CommandText = "DELETE FROM SpaceChannels WHERE Id = $cid";
     delCh.Parameters.AddWithValue("$cid", channelId);
     var rows = delCh.ExecuteNonQuery();
-    
+
     if (rows == 0) return Results.NotFound(new { error = "Channel not found" });
     return Results.Ok(new { message = "Channel deleted" });
 });
@@ -7012,14 +7162,14 @@ app.MapPost("/api/spaces/{publicId}/kick/{targetUsername}", (string publicId, st
     if (string.IsNullOrWhiteSpace(username)) return Results.Unauthorized();
     if (string.IsNullOrWhiteSpace(target)) return Results.BadRequest(new { error = "Invalid username" });
     if (username == target) return Results.BadRequest(new { error = "Cannot kick yourself" });
-    
+
     using var db = DbHelpers.OpenDb();
-    
+
     // Check kicker's role
     using var roleCheck = db.CreateCommand();
-    roleCheck.CommandText = @"SELECT sm.Role, s.Id FROM SpaceMembers sm 
-        JOIN Spaces s ON s.Id = sm.SpaceId 
-        JOIN AuthUsers u ON u.Id = sm.UserId 
+    roleCheck.CommandText = @"SELECT sm.Role, s.Id FROM SpaceMembers sm
+        JOIN Spaces s ON s.Id = sm.SpaceId
+        JOIN AuthUsers u ON u.Id = sm.UserId
         WHERE s.PublicId = $pid AND u.Username = $u";
     roleCheck.Parameters.AddWithValue("$pid", publicId);
     roleCheck.Parameters.AddWithValue("$u", username);
@@ -7028,14 +7178,14 @@ app.MapPost("/api/spaces/{publicId}/kick/{targetUsername}", (string publicId, st
     var kickerRole = roleR.GetString(0);
     var spaceId = roleR.GetInt64(1);
     roleR.Close();
-    
-    if (kickerRole != "owner" && kickerRole != "admin") 
+
+    if (kickerRole != "owner" && kickerRole != "admin")
         return Results.Json(new { error = "No permission" }, statusCode: 403);
-    
+
     // Check target's role
     using var targetCheck = db.CreateCommand();
-    targetCheck.CommandText = @"SELECT sm.Role, sm.Id FROM SpaceMembers sm 
-        JOIN AuthUsers u ON u.Id = sm.UserId 
+    targetCheck.CommandText = @"SELECT sm.Role, sm.Id FROM SpaceMembers sm
+        JOIN AuthUsers u ON u.Id = sm.UserId
         WHERE sm.SpaceId = $sid AND u.Username = $t";
     targetCheck.Parameters.AddWithValue("$sid", spaceId);
     targetCheck.Parameters.AddWithValue("$t", target);
@@ -7044,24 +7194,24 @@ app.MapPost("/api/spaces/{publicId}/kick/{targetUsername}", (string publicId, st
     var targetRole = targetR.GetString(0);
     var targetMemberId = targetR.GetInt64(1);
     targetR.Close();
-    
+
     // Cannot kick owner, admin can't kick other admins
     if (targetRole == "owner") return Results.BadRequest(new { error = "Cannot kick the owner" });
-    if (targetRole == "admin" && kickerRole != "owner") 
+    if (targetRole == "admin" && kickerRole != "owner")
         return Results.BadRequest(new { error = "Only owner can kick admins" });
-    
+
     // Remove member
     using var delCmd = db.CreateCommand();
     delCmd.CommandText = "DELETE FROM SpaceMembers WHERE Id = $mid";
     delCmd.Parameters.AddWithValue("$mid", targetMemberId);
     delCmd.ExecuteNonQuery();
-    
+
     // Update member count
     using var updCmd = db.CreateCommand();
     updCmd.CommandText = "UPDATE Spaces SET MemberCount = MemberCount - 1 WHERE Id = $sid";
     updCmd.Parameters.AddWithValue("$sid", spaceId);
     updCmd.ExecuteNonQuery();
-    
+
     return Results.Ok(new { message = "Member kicked" });
 });
 
@@ -7071,19 +7221,19 @@ app.MapPatch("/api/spaces/{publicId}/members/{targetUsername}/role", async (stri
     var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     var target = targetUsername?.Trim().ToLowerInvariant() ?? "";
     if (string.IsNullOrWhiteSpace(username)) return Results.Unauthorized();
-    
+
     var body = await ctx.Request.ReadFromJsonAsync<Dictionary<string, string>>();
     var newRole = body?.GetValueOrDefault("role", "member") ?? "member";
-    if (!new[] { "admin", "member" }.Contains(newRole)) 
+    if (!new[] { "admin", "member" }.Contains(newRole))
         return Results.BadRequest(new { error = "Invalid role" });
-    
+
     using var db = DbHelpers.OpenDb();
-    
+
     // Only owner can change roles
     using var roleCheck = db.CreateCommand();
-    roleCheck.CommandText = @"SELECT sm.Role, s.Id FROM SpaceMembers sm 
-        JOIN Spaces s ON s.Id = sm.SpaceId 
-        JOIN AuthUsers u ON u.Id = sm.UserId 
+    roleCheck.CommandText = @"SELECT sm.Role, s.Id FROM SpaceMembers sm
+        JOIN Spaces s ON s.Id = sm.SpaceId
+        JOIN AuthUsers u ON u.Id = sm.UserId
         WHERE s.PublicId = $pid AND u.Username = $u";
     roleCheck.Parameters.AddWithValue("$pid", publicId);
     roleCheck.Parameters.AddWithValue("$u", username);
@@ -7092,29 +7242,29 @@ app.MapPatch("/api/spaces/{publicId}/members/{targetUsername}/role", async (stri
     var myRole = roleR.GetString(0);
     var spaceId = roleR.GetInt64(1);
     roleR.Close();
-    
+
     if (myRole != "owner") return Results.Json(new { error = "Only owner can change roles" }, statusCode: 403);
-    
+
     // Cannot change owner's role
     using var targetCheck = db.CreateCommand();
-    targetCheck.CommandText = @"SELECT sm.Role FROM SpaceMembers sm 
-        JOIN AuthUsers u ON u.Id = sm.UserId 
+    targetCheck.CommandText = @"SELECT sm.Role FROM SpaceMembers sm
+        JOIN AuthUsers u ON u.Id = sm.UserId
         WHERE sm.SpaceId = $sid AND u.Username = $t";
     targetCheck.Parameters.AddWithValue("$sid", spaceId);
     targetCheck.Parameters.AddWithValue("$t", target);
     var targetRole = targetCheck.ExecuteScalar() as string;
     if (targetRole == null) return Results.NotFound(new { error = "User not in space" });
     if (targetRole == "owner") return Results.BadRequest(new { error = "Cannot change owner role" });
-    
+
     // Update role
     using var updCmd = db.CreateCommand();
-    updCmd.CommandText = @"UPDATE SpaceMembers SET Role = $role 
+    updCmd.CommandText = @"UPDATE SpaceMembers SET Role = $role
         WHERE SpaceId = $sid AND UserId = (SELECT Id FROM AuthUsers WHERE Username = $t)";
     updCmd.Parameters.AddWithValue("$role", newRole);
     updCmd.Parameters.AddWithValue("$sid", spaceId);
     updCmd.Parameters.AddWithValue("$t", target);
     updCmd.ExecuteNonQuery();
-    
+
     return Results.Ok(new { message = "Role updated", role = newRole });
 });
 
@@ -7148,11 +7298,11 @@ app.MapPost("/api/market/auth/register", async (HttpContext ctx) =>
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
     var json = System.Text.Json.JsonDocument.Parse(body).RootElement;
-    
+
     var username = json.TryGetProperty("username", out var u) ? u.GetString()?.Trim().ToLowerInvariant() : null;
     var email = json.TryGetProperty("email", out var e) ? e.GetString()?.Trim().ToLowerInvariant() : null;
     var password = json.TryGetProperty("password", out var p) ? p.GetString() : null;
-    
+
     if (string.IsNullOrWhiteSpace(username) || username.Length < 3 || username.Length > 24)
         return Results.Json(new { error = "Username must be 3-24 characters." }, statusCode: 400);
     if (!System.Text.RegularExpressions.Regex.IsMatch(username, @"^[a-z0-9_]+$"))
@@ -7161,25 +7311,25 @@ app.MapPost("/api/market/auth/register", async (HttpContext ctx) =>
         return Results.Json(new { error = "Valid email required." }, statusCode: 400);
     if (string.IsNullOrWhiteSpace(password) || password.Length < 8)
         return Results.Json(new { error = "Password must be at least 8 characters." }, statusCode: 400);
-    
+
     using var db = new SqliteConnection($"Data Source=/var/lib/runspace/runspace.db");
     db.Open();
-    
+
     using var chkUser = db.CreateCommand();
     chkUser.CommandText = "SELECT COUNT(*) FROM MarketUsers WHERE Username=$u";
     chkUser.Parameters.AddWithValue("$u", username);
     if (Convert.ToInt64(chkUser.ExecuteScalar()) > 0)
         return Results.Json(new { error = "Username already taken." }, statusCode: 409);
-    
+
     using var chkEmail = db.CreateCommand();
     chkEmail.CommandText = "SELECT COUNT(*) FROM MarketUsers WHERE Email=$e";
     chkEmail.Parameters.AddWithValue("$e", email);
     if (Convert.ToInt64(chkEmail.ExecuteScalar()) > 0)
         return Results.Json(new { error = "Email already registered." }, statusCode: 409);
-    
+
     var id = Guid.NewGuid().ToString("N");
     var hash = BCrypt.Net.BCrypt.HashPassword(password);
-    
+
     using var ins = db.CreateCommand();
     ins.CommandText = @"INSERT INTO MarketUsers (Id, Username, Email, PasswordHash, CreatedAt)
                         VALUES ($id, $u, $e, $h, $t)";
@@ -7189,7 +7339,7 @@ app.MapPost("/api/market/auth/register", async (HttpContext ctx) =>
     ins.Parameters.AddWithValue("$h", hash);
     ins.Parameters.AddWithValue("$t", DateTime.UtcNow.ToString("o"));
     ins.ExecuteNonQuery();
-    
+
     return Results.Ok(new { success = true, userId = id, username });
 });
 
@@ -7199,16 +7349,16 @@ app.MapPost("/api/market/auth/link-runspace", (HttpContext ctx) =>
     var authUser = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrWhiteSpace(authUser) || !AppHelpers.UserExists(authUser))
         return Results.Unauthorized();
-    
+
     using var db = new SqliteConnection($"Data Source=/var/lib/runspace/runspace.db");
     db.Open();
-    
+
     using var getAuth = db.CreateCommand();
     getAuth.CommandText = "SELECT Id FROM AuthUsers WHERE LOWER(Username)=$u LIMIT 1";
     getAuth.Parameters.AddWithValue("$u", authUser);
     var authId = getAuth.ExecuteScalar();
     if (authId == null) return Results.Unauthorized();
-    
+
     using var chkLink = db.CreateCommand();
     chkLink.CommandText = "SELECT Id, Username FROM MarketUsers WHERE LinkedAuthUserId=$aid LIMIT 1";
     chkLink.Parameters.AddWithValue("$aid", Convert.ToInt64(authId));
@@ -7216,15 +7366,15 @@ app.MapPost("/api/market/auth/link-runspace", (HttpContext ctx) =>
     if (rdr.Read())
         return Results.Ok(new { success = true, alreadyLinked = true, userId = rdr.GetString(0), username = rdr.GetString(1) });
     rdr.Close();
-    
+
     using var chkUser = db.CreateCommand();
     chkUser.CommandText = "SELECT COUNT(*) FROM MarketUsers WHERE Username=$u";
     chkUser.Parameters.AddWithValue("$u", authUser);
     if (Convert.ToInt64(chkUser.ExecuteScalar()) > 0)
         return Results.Json(new { error = "Username already exists in Market. Contact support." }, statusCode: 409);
-    
+
     var id = Guid.NewGuid().ToString("N");
-    
+
     using var ins = db.CreateCommand();
     ins.CommandText = @"INSERT INTO MarketUsers (Id, Username, LinkedAuthUserId, CreatedAt)
                         VALUES ($id, $u, $aid, $t)";
@@ -7233,7 +7383,7 @@ app.MapPost("/api/market/auth/link-runspace", (HttpContext ctx) =>
     ins.Parameters.AddWithValue("$aid", Convert.ToInt64(authId));
     ins.Parameters.AddWithValue("$t", DateTime.UtcNow.ToString("o"));
     ins.ExecuteNonQuery();
-    
+
     return Results.Ok(new { success = true, userId = id, username = authUser });
 });
 
@@ -7243,46 +7393,46 @@ app.MapPost("/api/market/auth/login", async (HttpContext ctx) =>
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
     var json = System.Text.Json.JsonDocument.Parse(body).RootElement;
-    
+
     var email = json.TryGetProperty("email", out var e) ? e.GetString()?.Trim().ToLowerInvariant() : null;
     var password = json.TryGetProperty("password", out var p) ? p.GetString() : null;
-    
+
     if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
         return Results.Json(new { error = "Email and password required." }, statusCode: 400);
-    
+
     using var db = new SqliteConnection($"Data Source=/var/lib/runspace/runspace.db");
     db.Open();
-    
+
     using var cmd = db.CreateCommand();
     cmd.CommandText = "SELECT Id, Username, PasswordHash, IsBanned, BanReason FROM MarketUsers WHERE Email=$e LIMIT 1";
     cmd.Parameters.AddWithValue("$e", email);
     using var rdr = cmd.ExecuteReader();
-    
+
     if (!rdr.Read())
         return Results.Json(new { error = "Invalid email or password." }, statusCode: 401);
-    
+
     var id = rdr.GetString(0);
     var username = rdr.GetString(1);
     var hash = rdr.IsDBNull(2) ? null : rdr.GetString(2);
     var isBanned = rdr.GetInt64(3) == 1;
     var banReason = rdr.IsDBNull(4) ? null : rdr.GetString(4);
     rdr.Close();
-    
+
     if (hash == null)
         return Results.Json(new { error = "This account uses RunSpace login." }, statusCode: 400);
-    
+
     if (!BCrypt.Net.BCrypt.Verify(password, hash))
         return Results.Json(new { error = "Invalid email or password." }, statusCode: 401);
-    
+
     if (isBanned)
         return Results.Json(new { error = $"Account banned: {banReason ?? "No reason given"}" }, statusCode: 403);
-    
+
     using var upd = db.CreateCommand();
     upd.CommandText = "UPDATE MarketUsers SET LastLoginAt=$t WHERE Id=$id";
     upd.Parameters.AddWithValue("$t", DateTime.UtcNow.ToString("o"));
     upd.Parameters.AddWithValue("$id", id);
     upd.ExecuteNonQuery();
-    
+
     ctx.Response.Cookies.Append("market_session", $"{id}:{username}", new CookieOptions
     {
         HttpOnly = true,
@@ -7291,7 +7441,7 @@ app.MapPost("/api/market/auth/login", async (HttpContext ctx) =>
         MaxAge = TimeSpan.FromDays(30),
         Domain = ".runspace.cloud"
     });
-    
+
     return Results.Ok(new { success = true, userId = id, username });
 });
 
@@ -7315,19 +7465,19 @@ app.MapGet("/api/market/profile/{userId}", (string userId, HttpContext ctx) =>
 {
     using var db = new SqliteConnection($"Data Source=/var/lib/runspace/runspace.db");
     db.Open();
-    
+
     using var cmd = db.CreateCommand();
     cmd.CommandText = @"SELECT Username, Bio, AvatarUrl, TotalSales, TotalEarnings, CreatedAt, IsBanned
                         FROM MarketUsers WHERE Id=$id LIMIT 1";
     cmd.Parameters.AddWithValue("$id", userId);
     using var rdr = cmd.ExecuteReader();
-    
+
     if (!rdr.Read())
         return Results.NotFound(new { error = "User not found." });
-    
+
     if (rdr.GetInt64(6) == 1)
         return Results.Json(new { error = "This account has been suspended." }, statusCode: 403);
-    
+
     var username = rdr.GetString(0);
     var bio = rdr.IsDBNull(1) ? "" : rdr.GetString(1);
     var avatarUrl = rdr.IsDBNull(2) ? "" : rdr.GetString(2);
@@ -7335,10 +7485,10 @@ app.MapGet("/api/market/profile/{userId}", (string userId, HttpContext ctx) =>
     var totalEarnings = rdr.GetInt64(4);
     var memberSince = rdr.GetString(5);
     rdr.Close();
-    
+
     using var scriptsCmd = db.CreateCommand();
     scriptsCmd.CommandText = @"SELECT Id, Name, Slug, Description, Category, Price, TotalSales, IsVerified
-                               FROM MarketScripts 
+                               FROM MarketScripts
                                WHERE CreatorUsername=$u AND Status='approved'
                                ORDER BY TotalSales DESC";
     scriptsCmd.Parameters.AddWithValue("$u", username);
@@ -7353,9 +7503,9 @@ app.MapGet("/api/market/profile/{userId}", (string userId, HttpContext ctx) =>
         });
     }
     sr.Close();
-    
+
     using var fbCmd = db.CreateCommand();
-    fbCmd.CommandText = @"SELECT sf.Rating, sf.Comment, sf.PricePaid, sf.CreatedAt, 
+    fbCmd.CommandText = @"SELECT sf.Rating, sf.Comment, sf.PricePaid, sf.CreatedAt,
                                  mu.Username, ms.Name as ScriptName
                           FROM SellerFeedback sf
                           JOIN MarketUsers mu ON mu.Id = sf.BuyerId
@@ -7372,9 +7522,9 @@ app.MapGet("/api/market/profile/{userId}", (string userId, HttpContext ctx) =>
             createdAt = fr.GetString(3), buyerUsername = fr.GetString(4), scriptName = fr.GetString(5)
         });
     }
-    
+
     double avgRating = feedback.Count > 0 ? feedback.Average(f => (double)((dynamic)f).rating) : 0;
-    
+
     return Results.Ok(new {
         profile = new { id = userId, username, bio, avatarUrl, totalSales, totalEarnings, memberSince },
         scripts, feedback, averageRating = Math.Round(avgRating, 1), feedbackCount = feedback.Count
@@ -7386,23 +7536,23 @@ app.MapPut("/api/market/profile", async (HttpContext ctx) =>
 {
     var marketUser = MarketHelpers.GetMarketUser(ctx);
     if (marketUser == null) return Results.Unauthorized();
-    
+
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
     var json = System.Text.Json.JsonDocument.Parse(body).RootElement;
-    
+
     var bio = json.TryGetProperty("bio", out var b) ? b.GetString() ?? "" : "";
     if (bio.Length > 500) bio = bio.Substring(0, 500);
-    
+
     using var db = new SqliteConnection($"Data Source=/var/lib/runspace/runspace.db");
     db.Open();
-    
+
     using var cmd = db.CreateCommand();
     cmd.CommandText = "UPDATE MarketUsers SET Bio=$bio WHERE Id=$id";
     cmd.Parameters.AddWithValue("$bio", bio);
     cmd.Parameters.AddWithValue("$id", marketUser.Value.id);
     cmd.ExecuteNonQuery();
-    
+
     return Results.Ok(new { success = true });
 });
 
@@ -7411,25 +7561,25 @@ app.MapPost("/api/market/feedback/{sellerId}", async (string sellerId, HttpConte
 {
     var marketUser = MarketHelpers.GetMarketUser(ctx);
     if (marketUser == null) return Results.Unauthorized();
-    
+
     if (marketUser.Value.id == sellerId)
         return Results.Json(new { error = "You cannot review yourself." }, statusCode: 400);
-    
+
     using var reader = new StreamReader(ctx.Request.Body);
     var body = await reader.ReadToEndAsync();
     var json = System.Text.Json.JsonDocument.Parse(body).RootElement;
-    
+
     var scriptId = json.TryGetProperty("scriptId", out var s) ? s.GetInt64() : 0;
     var rating = json.TryGetProperty("rating", out var r) ? r.GetInt32() : 0;
     var comment = json.TryGetProperty("comment", out var c) ? c.GetString() ?? "" : "";
-    
+
     if (scriptId == 0 || rating < 1 || rating > 5)
         return Results.Json(new { error = "Valid scriptId and rating (1-5) required." }, statusCode: 400);
     if (comment.Length > 1000) comment = comment.Substring(0, 1000);
-    
+
     using var db = new SqliteConnection($"Data Source=/var/lib/runspace/runspace.db");
     db.Open();
-    
+
     using var chkPurchase = db.CreateCommand();
     chkPurchase.CommandText = @"SELECT up.Id, ms.Price FROM UserPurchases up
                                 JOIN MarketScripts ms ON ms.Id = up.ScriptId
@@ -7442,14 +7592,14 @@ app.MapPost("/api/market/feedback/{sellerId}", async (string sellerId, HttpConte
         return Results.Json(new { error = "You must purchase this script to leave feedback." }, statusCode: 403);
     var pricePaid = pr.GetInt64(1);
     pr.Close();
-    
+
     using var chkReview = db.CreateCommand();
     chkReview.CommandText = "SELECT COUNT(*) FROM SellerFeedback WHERE BuyerId=$bid AND ScriptId=$sid";
     chkReview.Parameters.AddWithValue("$bid", marketUser.Value.id);
     chkReview.Parameters.AddWithValue("$sid", scriptId);
     if (Convert.ToInt64(chkReview.ExecuteScalar()) > 0)
         return Results.Json(new { error = "You already left feedback for this script." }, statusCode: 409);
-    
+
     using var ins = db.CreateCommand();
     ins.CommandText = @"INSERT INTO SellerFeedback (SellerId, BuyerId, ScriptId, PricePaid, Rating, Comment, CreatedAt)
                         VALUES ($seller, $buyer, $script, $price, $rating, $comment, $t)";
@@ -7461,7 +7611,7 @@ app.MapPost("/api/market/feedback/{sellerId}", async (string sellerId, HttpConte
     ins.Parameters.AddWithValue("$comment", comment);
     ins.Parameters.AddWithValue("$t", DateTime.UtcNow.ToString("o"));
     ins.ExecuteNonQuery();
-    
+
     return Results.Ok(new { success = true });
 });
 
@@ -8110,8 +8260,8 @@ app.MapGet("/api/encryption/my-keys", async (HttpContext ctx) =>
 
     var cmd = conn.CreateCommand();
     cmd.CommandText = @"
-        SELECT PublicKey, EncryptedPrivateKey, KeyVersion 
-        FROM UserEncryptionKeys 
+        SELECT PublicKey, EncryptedPrivateKey, KeyVersion
+        FROM UserEncryptionKeys
         WHERE UserId = @userId";
     cmd.Parameters.AddWithValue("@userId", userId);
 
@@ -8168,19 +8318,19 @@ app.MapPost("/api/auth/logout-all-devices", async (HttpContext ctx) =>
     var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrEmpty(username))
         return Results.Unauthorized();
-    
+
     using var conn = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     await conn.OpenAsync();
-    
+
     // Delete all sessions for this user
     var cmd = conn.CreateCommand();
     cmd.CommandText = "DELETE FROM PersistentSessions WHERE Username = @username";
     cmd.Parameters.AddWithValue("@username", username);
     var deleted = await cmd.ExecuteNonQueryAsync();
-    
+
     // Sign out current session
     await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-    
+
     return Results.Ok(new { message = $"Logged out from {deleted} device(s)", devicesLoggedOut = deleted });
 }).RequireAuthorization();
 
@@ -8190,25 +8340,25 @@ app.MapGet("/api/auth/active-sessions", async (HttpContext ctx) =>
     var username = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
     if (string.IsNullOrEmpty(username))
         return Results.Unauthorized();
-    
+
     using var conn = new SqliteConnection("Data Source=/var/lib/runspace/runspace.db");
     await conn.OpenAsync();
-    
+
     var cmd = conn.CreateCommand();
     cmd.CommandText = @"
-        SELECT SessionId, Ip, UserAgent, CreatedAt, LastActivity 
-        FROM PersistentSessions 
-        WHERE Username = @username 
+        SELECT SessionId, Ip, UserAgent, CreatedAt, LastActivity
+        FROM PersistentSessions
+        WHERE Username = @username
         ORDER BY LastActivity DESC";
     cmd.Parameters.AddWithValue("@username", username);
-    
+
     var sessions = new List<object>();
     using var reader = await cmd.ExecuteReaderAsync();
     while (await reader.ReadAsync())
     {
         var currentSessionId = ctx.Request.Cookies["runspace_auth_v3"];
         var isCurrentSession = reader.GetString(0) == currentSessionId;
-        
+
         sessions.Add(new
         {
             sessionId = reader.GetString(0).Substring(0, 8) + "...",
@@ -8219,7 +8369,7 @@ app.MapGet("/api/auth/active-sessions", async (HttpContext ctx) =>
             isCurrent = isCurrentSession
         });
     }
-    
+
     return Results.Ok(new { sessions });
 }).RequireAuthorization();
 
@@ -10585,6 +10735,1121 @@ public class ChatHub : Hub
     public async Task SendTyping(string toUser) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (!string.IsNullOrWhiteSpace(me) && !string.IsNullOrWhiteSpace(toUser)) await Clients.User(toUser.Trim().ToLowerInvariant()).SendAsync("ReceiveTyping", me); }
     public async Task SendReaction(string peer, string messageId, string emoji) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (!string.IsNullOrWhiteSpace(me) && !string.IsNullOrWhiteSpace(peer) && !string.IsNullOrWhiteSpace(messageId) && !string.IsNullOrWhiteSpace(emoji)) { await Clients.User(peer.Trim().ToLowerInvariant()).SendAsync("ReceiveReaction", messageId, emoji, me); await Clients.User(me).SendAsync("ReceiveReaction", messageId, emoji, me); } }
 
+
+
+    // rs-private-dm-p2p-voice-hub-v1
+    // SignalR transports signaling only.
+    // Audio is transported through encrypted WebRTC P2P.
+
+    public async Task<object> StartPrivateDmVoice(
+        string peer
+    )
+    {
+        var me =
+            Context.User
+                ?.Identity
+                ?.Name
+                ?.Trim()
+                .ToLowerInvariant()
+            ?? "";
+
+        peer =
+            PrivateDmVoiceSecurity
+                .NormalizeUser(
+                    peer
+                );
+
+        if (
+            string.IsNullOrWhiteSpace(
+                me
+            )
+            ||
+            string.IsNullOrWhiteSpace(
+                peer
+            )
+            ||
+            me.Equals(
+                peer,
+                StringComparison.OrdinalIgnoreCase
+            )
+            ||
+            !AppHelpers.UserExists(
+                me
+            )
+            ||
+            !AppHelpers.UserExists(
+                peer
+            )
+        )
+        {
+            throw new HubException(
+                "Invalid call target."
+            );
+        }
+
+        if (
+            !PrivateDmVoiceSecurity
+                .AreFriends(
+                    me,
+                    peer
+                )
+        )
+        {
+            throw new HubException(
+                "Private calls are available between friends."
+            );
+        }
+
+        var manager =
+            Context
+                .GetHttpContext()!
+                .RequestServices
+                .GetRequiredService<
+                    PrivateDmVoiceManager
+                >();
+
+        if (
+            !manager.TryStart(
+                me,
+                peer,
+                Context.ConnectionId,
+                out var error
+            )
+        )
+        {
+            throw new HubException(
+                error
+            );
+        }
+
+        await Clients
+            .User(
+                peer
+            )
+            .SendAsync(
+                "PrivateDmVoiceIncoming",
+                me
+            );
+
+        return new
+        {
+            peer,
+
+            status =
+                "ringing",
+
+            mode =
+                "p2p",
+
+            turnEnabled =
+                false
+        };
+    }
+
+
+    public async Task<object> AcceptPrivateDmVoice(
+        string peer
+    )
+    {
+        var me =
+            Context.User
+                ?.Identity
+                ?.Name
+                ?.Trim()
+                .ToLowerInvariant()
+            ?? "";
+
+        peer =
+            PrivateDmVoiceSecurity
+                .NormalizeUser(
+                    peer
+                );
+
+        if (
+            !PrivateDmVoiceSecurity
+                .AreFriends(
+                    me,
+                    peer
+                )
+        )
+        {
+            throw new HubException(
+                "Private calls are available between friends."
+            );
+        }
+
+        var manager =
+            Context
+                .GetHttpContext()!
+                .RequestServices
+                .GetRequiredService<
+                    PrivateDmVoiceManager
+                >();
+
+        if (
+            !manager.TryAccept(
+                me,
+                peer,
+                Context.ConnectionId,
+                out var users,
+                out var error
+            )
+        )
+        {
+            throw new HubException(
+                error
+            );
+        }
+
+        await Clients
+            .User(
+                peer
+            )
+            .SendAsync(
+                "PrivateDmVoiceAccepted",
+                me
+            );
+
+        return new
+        {
+            peer,
+
+            users,
+
+            status =
+                "connecting"
+        };
+    }
+
+
+    public async Task DeclinePrivateDmVoice(
+        string peer
+    )
+    {
+        var me =
+            Context.User
+                ?.Identity
+                ?.Name
+                ?.Trim()
+                .ToLowerInvariant()
+            ?? "";
+
+        peer =
+            PrivateDmVoiceSecurity
+                .NormalizeUser(
+                    peer
+                );
+
+        var manager =
+            Context
+                .GetHttpContext()!
+                .RequestServices
+                .GetRequiredService<
+                    PrivateDmVoiceManager
+                >();
+
+        manager.TryEndPair(
+            me,
+            peer,
+            out var otherUser
+        );
+
+        if (
+            !string.IsNullOrWhiteSpace(
+                otherUser
+            )
+        )
+        {
+            await Clients
+                .User(
+                    otherUser
+                )
+                .SendAsync(
+                    "PrivateDmVoiceDeclined",
+                    me
+                );
+        }
+    }
+
+
+    public async Task EndPrivateDmVoice(
+        string peer
+    )
+    {
+        var me =
+            Context.User
+                ?.Identity
+                ?.Name
+                ?.Trim()
+                .ToLowerInvariant()
+            ?? "";
+
+        peer =
+            PrivateDmVoiceSecurity
+                .NormalizeUser(
+                    peer
+                );
+
+        var manager =
+            Context
+                .GetHttpContext()!
+                .RequestServices
+                .GetRequiredService<
+                    PrivateDmVoiceManager
+                >();
+
+        manager.TryEndPair(
+            me,
+            peer,
+            out var otherUser
+        );
+
+        if (
+            !string.IsNullOrWhiteSpace(
+                otherUser
+            )
+        )
+        {
+            await Clients
+                .User(
+                    otherUser
+                )
+                .SendAsync(
+                    "PrivateDmVoiceEnded",
+                    me
+                );
+        }
+
+        await Clients
+            .Caller
+            .SendAsync(
+                "PrivateDmVoiceEnded",
+                me
+            );
+    }
+
+
+    public async Task SendPrivateDmVoiceOffer(
+        string peer,
+        string sdp
+    )
+    {
+        if (
+            string.IsNullOrWhiteSpace(
+                sdp
+            )
+            ||
+            sdp.Length
+            >
+            200_000
+        )
+        {
+            throw new HubException(
+                "Invalid SDP."
+            );
+        }
+
+        var target =
+            RequirePrivateDmVoiceTarget(
+                peer
+            );
+
+        await Clients
+            .Client(
+                target.ConnectionId
+            )
+            .SendAsync(
+                "PrivateDmVoiceOffer",
+                target.Me,
+                sdp
+            );
+    }
+
+
+    public async Task SendPrivateDmVoiceAnswer(
+        string peer,
+        string sdp
+    )
+    {
+        if (
+            string.IsNullOrWhiteSpace(
+                sdp
+            )
+            ||
+            sdp.Length
+            >
+            200_000
+        )
+        {
+            throw new HubException(
+                "Invalid SDP."
+            );
+        }
+
+        var target =
+            RequirePrivateDmVoiceTarget(
+                peer
+            );
+
+        await Clients
+            .Client(
+                target.ConnectionId
+            )
+            .SendAsync(
+                "PrivateDmVoiceAnswer",
+                target.Me,
+                sdp
+            );
+    }
+
+
+    public async Task SendPrivateDmVoiceIce(
+        string peer,
+        string candidateJson
+    )
+    {
+        if (
+            string.IsNullOrWhiteSpace(
+                candidateJson
+            )
+            ||
+            candidateJson.Length
+            >
+            32_000
+        )
+        {
+            throw new HubException(
+                "Invalid ICE candidate."
+            );
+        }
+
+        var target =
+            RequirePrivateDmVoiceTarget(
+                peer
+            );
+
+        await Clients
+            .Client(
+                target.ConnectionId
+            )
+            .SendAsync(
+                "PrivateDmVoiceIce",
+                target.Me,
+                candidateJson
+            );
+    }
+
+
+    public async Task SetPrivateDmVoiceMuted(
+        string peer,
+        bool muted
+    )
+    {
+        var target =
+            RequirePrivateDmVoiceTarget(
+                peer
+            );
+
+        await Clients
+            .Client(
+                target.ConnectionId
+            )
+            .SendAsync(
+                "PrivateDmVoiceMuted",
+                target.Me,
+                muted
+            );
+    }
+
+
+    private (
+        string Me,
+        string Peer,
+        string ConnectionId
+    ) RequirePrivateDmVoiceTarget(
+        string peer
+    )
+    {
+        var me =
+            Context.User
+                ?.Identity
+                ?.Name
+                ?.Trim()
+                .ToLowerInvariant()
+            ?? "";
+
+        peer =
+            PrivateDmVoiceSecurity
+                .NormalizeUser(
+                    peer
+                );
+
+        if (
+            string.IsNullOrWhiteSpace(
+                me
+            )
+            ||
+            string.IsNullOrWhiteSpace(
+                peer
+            )
+            ||
+            me.Equals(
+                peer,
+                StringComparison.OrdinalIgnoreCase
+            )
+            ||
+            !PrivateDmVoiceSecurity
+                .AreFriends(
+                    me,
+                    peer
+                )
+        )
+        {
+            throw new HubException(
+                "Not allowed."
+            );
+        }
+
+        var manager =
+            Context
+                .GetHttpContext()!
+                .RequestServices
+                .GetRequiredService<
+                    PrivateDmVoiceManager
+                >();
+
+        if (
+            !manager.IsConnected(
+                me,
+                peer,
+                me
+            )
+        )
+        {
+            throw new HubException(
+                "You are not connected to this call."
+            );
+        }
+
+        if (
+            !manager.TryGetConnection(
+                me,
+                peer,
+                peer,
+                out var targetConnection
+            )
+        )
+        {
+            throw new HubException(
+                "The other user is not connected."
+            );
+        }
+
+        return
+        (
+            me,
+            peer,
+            targetConnection
+        );
+    }
+
+
+// rs-group-dm-p2p-voice-hub-v1
+    // Group DM P2P voice.
+    // SignalR only transports signaling data.
+    // Audio is transported by WebRTC.
+
+    public async Task<object> JoinGroupDmVoice(
+        string roomId
+    )
+    {
+        var me =
+            Context.User
+                ?.Identity
+                ?.Name
+                ?.Trim()
+                .ToLowerInvariant()
+            ?? "";
+
+        roomId =
+            GroupDmVoiceSecurity
+                .NormalizeRoomId(
+                    roomId
+                );
+
+        if (
+            string.IsNullOrWhiteSpace(
+                me
+            )
+            ||
+            !AppHelpers.UserExists(
+                me
+            )
+        )
+        {
+            throw new HubException(
+                "Not signed in."
+            );
+        }
+
+        if (
+            !GroupDmVoiceSecurity
+                .IsValidRoomId(
+                    roomId
+                )
+        )
+        {
+            throw new HubException(
+                "Invalid group."
+            );
+        }
+
+        if (
+            !GroupDmVoiceSecurity
+                .IsMember(
+                    roomId,
+                    me
+                )
+        )
+        {
+            throw new HubException(
+                "You are not a member of this group."
+            );
+        }
+
+        var manager =
+            Context
+                .GetHttpContext()!
+                .RequestServices
+                .GetRequiredService<
+                    GroupDmVoiceManager
+                >();
+
+        if (
+            !manager.TryJoin(
+                roomId,
+                me,
+                Context.ConnectionId,
+                out var users
+            )
+        )
+        {
+            throw new HubException(
+                "The call is full."
+            );
+        }
+
+        var signalGroup =
+            GroupDmVoiceSecurity
+                .SignalRGroup(
+                    roomId
+                );
+
+        await Groups
+            .AddToGroupAsync(
+                Context.ConnectionId,
+                signalGroup
+            );
+
+        await Clients
+            .Group(
+                signalGroup
+            )
+            .SendAsync(
+                "GroupDmVoiceUserJoined",
+                roomId,
+                me,
+                users
+            );
+
+        await NotifyGroupDmVoiceActivity(
+            roomId,
+            users
+        );
+
+        return new
+        {
+            roomId,
+
+            users,
+
+            maxParticipants =
+                GroupDmVoiceSecurity
+                    .MaxParticipants
+        };
+    }
+
+
+    public async Task<object> GetGroupDmVoiceState(
+        string roomId
+    )
+    {
+        var me =
+            Context.User
+                ?.Identity
+                ?.Name
+                ?.Trim()
+                .ToLowerInvariant()
+            ?? "";
+
+        roomId =
+            GroupDmVoiceSecurity
+                .NormalizeRoomId(
+                    roomId
+                );
+
+        if (
+            !GroupDmVoiceSecurity
+                .IsValidRoomId(
+                    roomId
+                )
+            ||
+            !GroupDmVoiceSecurity
+                .IsMember(
+                    roomId,
+                    me
+                )
+        )
+        {
+            throw new HubException(
+                "Not allowed."
+            );
+        }
+
+        var manager =
+            Context
+                .GetHttpContext()!
+                .RequestServices
+                .GetRequiredService<
+                    GroupDmVoiceManager
+                >();
+
+        var users =
+            manager.GetUsers(
+                roomId
+            );
+
+        return new
+        {
+            roomId,
+
+            active =
+                users.Count > 0,
+
+            users,
+
+            maxParticipants =
+                GroupDmVoiceSecurity
+                    .MaxParticipants
+        };
+    }
+
+
+    public async Task LeaveGroupDmVoice(
+        string roomId
+    )
+    {
+        roomId =
+            GroupDmVoiceSecurity
+                .NormalizeRoomId(
+                    roomId
+                );
+
+        if (
+            !GroupDmVoiceSecurity
+                .IsValidRoomId(
+                    roomId
+                )
+        )
+        {
+            return;
+        }
+
+        var manager =
+            Context
+                .GetHttpContext()!
+                .RequestServices
+                .GetRequiredService<
+                    GroupDmVoiceManager
+                >();
+
+        if (
+            !manager.TryLeaveConnection(
+                Context.ConnectionId,
+                out var actualRoom,
+                out var username,
+                out var remainingUsers
+            )
+        )
+        {
+            return;
+        }
+
+        var signalGroup =
+            GroupDmVoiceSecurity
+                .SignalRGroup(
+                    actualRoom
+                );
+
+        await Groups
+            .RemoveFromGroupAsync(
+                Context.ConnectionId,
+                signalGroup
+            );
+
+        await Clients
+            .Group(
+                signalGroup
+            )
+            .SendAsync(
+                "GroupDmVoiceUserLeft",
+                actualRoom,
+                username,
+                remainingUsers
+            );
+
+        await Clients
+            .Caller
+            .SendAsync(
+                "GroupDmVoiceLeft",
+                actualRoom
+            );
+
+        await NotifyGroupDmVoiceActivity(
+            actualRoom,
+            remainingUsers
+        );
+    }
+
+
+    public async Task SendGroupDmVoiceOffer(
+        string roomId,
+        string toUser,
+        string sdp
+    )
+    {
+        if (
+            string.IsNullOrWhiteSpace(
+                sdp
+            )
+            ||
+            sdp.Length > 200_000
+        )
+        {
+            throw new HubException(
+                "Invalid SDP."
+            );
+        }
+
+        var target =
+            RequireGroupDmVoiceTarget(
+                roomId,
+                toUser
+            );
+
+        await Clients
+            .Client(
+                target.TargetConnection
+            )
+            .SendAsync(
+                "GroupDmVoiceOffer",
+                target.RoomId,
+                target.Me,
+                sdp
+            );
+    }
+
+
+    public async Task SendGroupDmVoiceAnswer(
+        string roomId,
+        string toUser,
+        string sdp
+    )
+    {
+        if (
+            string.IsNullOrWhiteSpace(
+                sdp
+            )
+            ||
+            sdp.Length > 200_000
+        )
+        {
+            throw new HubException(
+                "Invalid SDP."
+            );
+        }
+
+        var target =
+            RequireGroupDmVoiceTarget(
+                roomId,
+                toUser
+            );
+
+        await Clients
+            .Client(
+                target.TargetConnection
+            )
+            .SendAsync(
+                "GroupDmVoiceAnswer",
+                target.RoomId,
+                target.Me,
+                sdp
+            );
+    }
+
+
+    public async Task SendGroupDmVoiceIce(
+        string roomId,
+        string toUser,
+        string candidateJson
+    )
+    {
+        if (
+            string.IsNullOrWhiteSpace(
+                candidateJson
+            )
+            ||
+            candidateJson.Length > 32_000
+        )
+        {
+            throw new HubException(
+                "Invalid ICE candidate."
+            );
+        }
+
+        var target =
+            RequireGroupDmVoiceTarget(
+                roomId,
+                toUser
+            );
+
+        await Clients
+            .Client(
+                target.TargetConnection
+            )
+            .SendAsync(
+                "GroupDmVoiceIce",
+                target.RoomId,
+                target.Me,
+                candidateJson
+            );
+    }
+
+
+    public async Task SetGroupDmVoiceMuted(
+        string roomId,
+        bool muted
+    )
+    {
+        var me =
+            Context.User
+                ?.Identity
+                ?.Name
+                ?.Trim()
+                .ToLowerInvariant()
+            ?? "";
+
+        roomId =
+            GroupDmVoiceSecurity
+                .NormalizeRoomId(
+                    roomId
+                );
+
+        var manager =
+            Context
+                .GetHttpContext()!
+                .RequestServices
+                .GetRequiredService<
+                    GroupDmVoiceManager
+                >();
+
+        if (
+            !GroupDmVoiceSecurity
+                .IsMember(
+                    roomId,
+                    me
+                )
+            ||
+            !manager.IsParticipant(
+                roomId,
+                me
+            )
+        )
+        {
+            throw new HubException(
+                "Not in this call."
+            );
+        }
+
+        await Clients
+            .Group(
+                GroupDmVoiceSecurity
+                    .SignalRGroup(
+                        roomId
+                    )
+            )
+            .SendAsync(
+                "GroupDmVoiceMuted",
+                roomId,
+                me,
+                muted
+            );
+    }
+
+
+    private (
+        string RoomId,
+        string Me,
+        string TargetConnection
+    ) RequireGroupDmVoiceTarget(
+        string roomId,
+        string toUser
+    )
+    {
+        var me =
+            Context.User
+                ?.Identity
+                ?.Name
+                ?.Trim()
+                .ToLowerInvariant()
+            ?? "";
+
+        roomId =
+            GroupDmVoiceSecurity
+                .NormalizeRoomId(
+                    roomId
+                );
+
+        toUser =
+            GroupDmVoiceSecurity
+                .NormalizeUsername(
+                    toUser
+                );
+
+        if (
+            string.IsNullOrWhiteSpace(
+                me
+            )
+            ||
+            string.IsNullOrWhiteSpace(
+                toUser
+            )
+            ||
+            me.Equals(
+                toUser,
+                StringComparison.OrdinalIgnoreCase
+            )
+        )
+        {
+            throw new HubException(
+                "Invalid signaling target."
+            );
+        }
+
+        if (
+            !GroupDmVoiceSecurity
+                .IsMember(
+                    roomId,
+                    me
+                )
+            ||
+            !GroupDmVoiceSecurity
+                .IsMember(
+                    roomId,
+                    toUser
+                )
+        )
+        {
+            throw new HubException(
+                "Not allowed."
+            );
+        }
+
+        var manager =
+            Context
+                .GetHttpContext()!
+                .RequestServices
+                .GetRequiredService<
+                    GroupDmVoiceManager
+                >();
+
+        if (
+            !manager.IsParticipant(
+                roomId,
+                me
+            )
+        )
+        {
+            throw new HubException(
+                "You are not in this call."
+            );
+        }
+
+        if (
+            !manager.TryGetConnection(
+                roomId,
+                toUser,
+                out var targetConnection
+            )
+        )
+        {
+            throw new HubException(
+                "The user is not in this call."
+            );
+        }
+
+        return
+        (
+            roomId,
+            me,
+            targetConnection
+        );
+    }
+
+
+    private async Task NotifyGroupDmVoiceActivity(
+        string roomId,
+        IReadOnlyCollection<string> users
+    )
+    {
+        var members =
+            GroupDmVoiceSecurity
+                .GetMembers(
+                    roomId
+                );
+
+        var payload =
+            new
+            {
+                roomId,
+
+                active =
+                    users.Count > 0,
+
+                users,
+
+                maxParticipants =
+                    GroupDmVoiceSecurity
+                        .MaxParticipants
+            };
+
+        foreach (
+            var member
+            in members
+        )
+        {
+            await Clients
+                .User(
+                    member
+                )
+                .SendAsync(
+                    "GroupDmVoiceCallActivity",
+                    payload
+                );
+        }
+    }
+
+
     // Group channels
     public async Task JoinGroupChannel(string groupId, string channelId) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (string.IsNullOrWhiteSpace(me)) throw new HubException("Inte inloggad."); var gid = (groupId ?? "").Trim().ToLowerInvariant(); var cid = (channelId ?? "").Trim().ToLowerInvariant(); if (!GroupHelpers.IsMember(gid, me)) throw new HubException("Inte medlem."); await Groups.AddToGroupAsync(Context.ConnectionId, $"group:{gid}:{cid}"); }
     public async Task LeaveGroupChannel(string groupId, string channelId) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (!string.IsNullOrWhiteSpace(me)) await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"group:{(groupId ?? "").Trim().ToLowerInvariant()}:{(channelId ?? "").Trim().ToLowerInvariant()}"); }
@@ -10608,17 +11873,494 @@ public class ChatHub : Hub
     public async Task VoiceSpeakingState(string channelName, bool speaking) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (string.IsNullOrWhiteSpace(me)) return; var vcm = Context.GetHttpContext()!.RequestServices.GetRequiredService<VoiceChannelManager>(); vcm.SetSpeaking(me, speaking); await Clients.Group($"voice:{channelName}").SendAsync("VoiceSpeaking", me, speaking); }
     public async Task VoiceScreenShareState(string channelName, bool sharing) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (string.IsNullOrWhiteSpace(me)) return; var vcm = Context.GetHttpContext()!.RequestServices.GetRequiredService<VoiceChannelManager>(); vcm.SetSharing(me, sharing); await Clients.Group($"voice:{channelName}").SendAsync("VoiceScreenShareState", me, sharing); }
     // Private Calls
-    public async Task CallUser(string toUser) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (string.IsNullOrWhiteSpace(me)) return; var target = (toUser ?? "").Trim().ToLowerInvariant(); if (string.IsNullOrWhiteSpace(target) || target == me) return; await Clients.User(target).SendAsync("IncomingCall", me); }
-    public async Task AcceptCall(string fromUser) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (string.IsNullOrWhiteSpace(me)) return; var target = (fromUser ?? "").Trim().ToLowerInvariant(); await Clients.User(target).SendAsync("CallAccepted", me); }
-    public async Task RejectCall(string fromUser) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (string.IsNullOrWhiteSpace(me)) return; var target = (fromUser ?? "").Trim().ToLowerInvariant(); await Clients.User(target).SendAsync("CallRejected", me); }
-    public async Task EndCall(string otherUser) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (string.IsNullOrWhiteSpace(me)) return; var target = (otherUser ?? "").Trim().ToLowerInvariant(); await Clients.User(target).SendAsync("CallEnded", me); }
-    public async Task SendCallOffer(string toUser, string sdp) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (!string.IsNullOrWhiteSpace(me)) await Clients.User(toUser.Trim().ToLowerInvariant()).SendAsync("CallOffer", me, sdp); }
-    public async Task SendCallAnswer(string toUser, string sdp) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (!string.IsNullOrWhiteSpace(me)) await Clients.User(toUser.Trim().ToLowerInvariant()).SendAsync("CallAnswer", me, sdp); }
-    public async Task SendCallIce(string toUser, string candidate) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (!string.IsNullOrWhiteSpace(me)) await Clients.User(toUser.Trim().ToLowerInvariant()).SendAsync("CallIce", me, candidate); }
+
+    private static string NormalizePrivateCallUser(
+        string? value
+    )
+    {
+        return (
+            value
+            ?? ""
+        )
+            .Trim()
+            .ToLowerInvariant();
+    }
+
+
+    private static bool PrivateCallFriendshipExists(
+        string first,
+        string second
+    )
+    {
+        using var db =
+            DbHelpers.OpenDb();
+
+
+        using var command =
+            db.CreateCommand();
+
+
+        command.CommandText = @"
+            SELECT 1
+
+            FROM Friendships
+
+            WHERE
+
+                (
+                    lower(UserA) = lower($first)
+
+                    AND
+
+                    lower(UserB) = lower($second)
+                )
+
+                OR
+
+                (
+                    lower(UserA) = lower($second)
+
+                    AND
+
+                    lower(UserB) = lower($first)
+                )
+
+            LIMIT 1
+        ";
+
+
+        command.Parameters
+            .AddWithValue(
+                "$first",
+                first
+            );
+
+
+        command.Parameters
+            .AddWithValue(
+                "$second",
+                second
+            );
+
+
+        return command.ExecuteScalar()
+            != null;
+    }
+
+
+    private (
+        string Me,
+        string Target
+    ) RequirePrivateCallPeer(
+        string? rawTarget
+    )
+    {
+        var me =
+            NormalizePrivateCallUser(
+
+                Context.User
+                    ?.Identity
+                    ?.Name
+            );
+
+
+        var target =
+            NormalizePrivateCallUser(
+                rawTarget
+            );
+
+
+        if (
+            string.IsNullOrWhiteSpace(
+                me
+            )
+        )
+        {
+            throw new HubException(
+                "Not authenticated."
+            );
+        }
+
+
+        if (
+            string.IsNullOrWhiteSpace(
+                target
+            )
+
+            || target == me
+        )
+        {
+            throw new HubException(
+                "Invalid call target."
+            );
+        }
+
+
+        if (
+            !PrivateCallFriendshipExists(
+                me,
+                target
+            )
+        )
+        {
+            throw new HubException(
+                "Calls require an accepted friendship."
+            );
+        }
+
+
+        return (
+            me,
+            target
+        );
+    }
+
+
+    public async Task CallUser(
+        string toUser
+    )
+    {
+        var call =
+            RequirePrivateCallPeer(
+                toUser
+            );
+
+
+        await Clients
+
+            .User(
+                call.Target
+            )
+
+            .SendAsync(
+
+                "IncomingCall",
+
+                call.Me
+            );
+    }
+
+
+    public async Task AcceptCall(
+        string fromUser
+    )
+    {
+        var call =
+            RequirePrivateCallPeer(
+                fromUser
+            );
+
+
+        await Clients
+
+            .User(
+                call.Target
+            )
+
+            .SendAsync(
+
+                "CallAccepted",
+
+                call.Me
+            );
+    }
+
+
+    public async Task RejectCall(
+        string fromUser
+    )
+    {
+        var call =
+            RequirePrivateCallPeer(
+                fromUser
+            );
+
+
+        await Clients
+
+            .User(
+                call.Target
+            )
+
+            .SendAsync(
+
+                "CallRejected",
+
+                call.Me
+            );
+    }
+
+
+    public async Task EndCall(
+        string otherUser
+    )
+    {
+        var call =
+            RequirePrivateCallPeer(
+                otherUser
+            );
+
+
+        await Clients
+
+            .User(
+                call.Target
+            )
+
+            .SendAsync(
+
+                "CallEnded",
+
+                call.Me
+            );
+    }
+
+
+    public async Task SendCallOffer(
+        string toUser,
+        string sdp
+    )
+    {
+        var call =
+            RequirePrivateCallPeer(
+                toUser
+            );
+
+
+        if (
+            string.IsNullOrWhiteSpace(
+                sdp
+            )
+
+            || sdp.Length > 100_000
+        )
+        {
+            throw new HubException(
+                "Invalid call offer."
+            );
+        }
+
+
+        await Clients
+
+            .User(
+                call.Target
+            )
+
+            .SendAsync(
+
+                "CallOffer",
+
+                call.Me,
+
+                sdp
+            );
+    }
+
+
+    public async Task SendCallAnswer(
+        string toUser,
+        string sdp
+    )
+    {
+        var call =
+            RequirePrivateCallPeer(
+                toUser
+            );
+
+
+        if (
+            string.IsNullOrWhiteSpace(
+                sdp
+            )
+
+            || sdp.Length > 100_000
+        )
+        {
+            throw new HubException(
+                "Invalid call answer."
+            );
+        }
+
+
+        await Clients
+
+            .User(
+                call.Target
+            )
+
+            .SendAsync(
+
+                "CallAnswer",
+
+                call.Me,
+
+                sdp
+            );
+    }
+
+
+    public async Task SendCallIce(
+        string toUser,
+        string candidate
+    )
+    {
+        var call =
+            RequirePrivateCallPeer(
+                toUser
+            );
+
+
+        if (
+            string.IsNullOrWhiteSpace(
+                candidate
+            )
+
+            || candidate.Length > 20_000
+        )
+        {
+            throw new HubException(
+                "Invalid ICE candidate."
+            );
+        }
+
+
+        await Clients
+
+            .User(
+                call.Target
+            )
+
+            .SendAsync(
+
+                "CallIce",
+
+                call.Me,
+
+                candidate
+            );
+    }
+
 
     // Presence
     public override async Task OnConnectedAsync() { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (!string.IsNullOrWhiteSpace(me)) { var presence = Context.GetHttpContext()!.RequestServices.GetRequiredService<PresenceTracker>(); var wasOnline = presence.IsOnline(me); presence.AddConnection(me, Context.ConnectionId); if (!wasOnline) await Clients.All.SendAsync("PresenceUpdate", me, "online"); } await base.OnConnectedAsync(); }
-    public override async Task OnDisconnectedAsync(Exception? exception) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (!string.IsNullOrWhiteSpace(me)) { var presence = Context.GetHttpContext()!.RequestServices.GetRequiredService<PresenceTracker>(); presence.RemoveConnection(me, Context.ConnectionId); if (!presence.IsOnline(me)) { await Clients.All.SendAsync("PresenceUpdate", me, "offline"); var vcm = Context.GetHttpContext()!.RequestServices.GetRequiredService<VoiceChannelManager>(); var ch = vcm.GetUserChannel(me); if (ch != null) { vcm.LeaveCurrentChannel(me); await Clients.Group($"voice:{ch}").SendAsync("VoiceUserLeft", ch, me); await Clients.All.SendAsync("VoiceChannelState", vcm.GetAllChannelStates()); } var gvm = Context.GetHttpContext()!.RequestServices.GetRequiredService<GroupVoiceManager>(); var gch = gvm.GetUserChannel(me); if (gch != null) { gvm.Leave(me); await Clients.Group(gch).SendAsync("GroupVoiceUserLeft", "", "", me); } } } await base.OnDisconnectedAsync(exception); }
+    public override async Task OnDisconnectedAsync(Exception? exception) { var me = Context.User?.Identity?.Name?.Trim().ToLowerInvariant(); if (!string.IsNullOrWhiteSpace(me)) { var presence = Context.GetHttpContext()!.RequestServices.GetRequiredService<PresenceTracker>(); presence.RemoveConnection(me, Context.ConnectionId); if (!presence.IsOnline(me)) { await Clients.All.SendAsync("PresenceUpdate", me, "offline"); var vcm = Context.GetHttpContext()!.RequestServices.GetRequiredService<VoiceChannelManager>(); var ch = vcm.GetUserChannel(me); if (ch != null) { vcm.LeaveCurrentChannel(me); await Clients.Group($"voice:{ch}").SendAsync("VoiceUserLeft", ch, me); await Clients.All.SendAsync("VoiceChannelState", vcm.GetAllChannelStates()); } var gvm = Context.GetHttpContext()!.RequestServices.GetRequiredService<GroupVoiceManager>(); var gch = gvm.GetUserChannel(me); if (gch != null) { gvm.Leave(me); await Clients.Group(gch).SendAsync("GroupVoiceUserLeft", "", "", me); } } }
+        // rs-group-dm-p2p-disconnect-v1
+        var groupDmVoiceManager =
+            Context
+                .GetHttpContext()!
+                .RequestServices
+                .GetRequiredService<
+                    GroupDmVoiceManager
+                >();
+
+        if (
+            groupDmVoiceManager
+                .TryLeaveConnection(
+                    Context.ConnectionId,
+                    out var groupDmVoiceRoom,
+                    out var groupDmVoiceUser,
+                    out var groupDmVoiceRemaining
+                )
+        )
+        {
+            var groupDmSignalGroup =
+                GroupDmVoiceSecurity
+                    .SignalRGroup(
+                        groupDmVoiceRoom
+                    );
+
+            await Clients
+                .Group(
+                    groupDmSignalGroup
+                )
+                .SendAsync(
+                    "GroupDmVoiceUserLeft",
+                    groupDmVoiceRoom,
+                    groupDmVoiceUser,
+                    groupDmVoiceRemaining
+                );
+
+            var groupDmMembers =
+                GroupDmVoiceSecurity
+                    .GetMembers(
+                        groupDmVoiceRoom
+                    );
+
+            var groupDmActivity =
+                new
+                {
+                    roomId =
+                        groupDmVoiceRoom,
+
+                    active =
+                        groupDmVoiceRemaining
+                            .Count
+                        >
+                        0,
+
+                    users =
+                        groupDmVoiceRemaining,
+
+                    maxParticipants =
+                        GroupDmVoiceSecurity
+                            .MaxParticipants
+                };
+
+            foreach (
+                var groupDmMember
+                in groupDmMembers
+            )
+            {
+                await Clients
+                    .User(
+                        groupDmMember
+                    )
+                    .SendAsync(
+                        "GroupDmVoiceCallActivity",
+                        groupDmActivity
+                    );
+            }
+        }
+
+
+        // rs-private-dm-p2p-disconnect-v1
+
+        var privateDmVoiceManager =
+            Context
+                .GetHttpContext()!
+                .RequestServices
+                .GetRequiredService<
+                    PrivateDmVoiceManager
+                >();
+
+        if (
+            privateDmVoiceManager
+                .TryEndConnection(
+                    Context.ConnectionId,
+                    out var privateDmDisconnectedUser,
+                    out var privateDmOtherUser
+                )
+        )
+        {
+            if (
+                !string.IsNullOrWhiteSpace(
+                    privateDmOtherUser
+                )
+            )
+            {
+                await Clients
+                    .User(
+                        privateDmOtherUser
+                    )
+                    .SendAsync(
+                        "PrivateDmVoiceEnded",
+                        privateDmDisconnectedUser
+                    );
+            }
+        }
+
+await base.OnDisconnectedAsync(exception); }
     // ══════════════════════════════════════
     // SPACES REAL-TIME
     // ══════════════════════════════════════
@@ -10821,7 +12563,7 @@ public static class MarketHelpers
             var parts = session.Split(':');
             if (parts.Length == 2) return (parts[0], parts[1]);
         }
-        
+
         // Fallback: check if RunSpace user is linked
         var authUser = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
         if (!string.IsNullOrWhiteSpace(authUser) && AppHelpers.UserExists(authUser))
@@ -10836,7 +12578,7 @@ public static class MarketHelpers
             using var rdr = cmd.ExecuteReader();
             if (rdr.Read()) return (rdr.GetString(0), rdr.GetString(1));
         }
-        
+
         return null;
     }
 }

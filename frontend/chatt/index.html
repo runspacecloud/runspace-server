@@ -129,6 +129,33 @@
     </div>
 
     <div id="channel-list">
+
+      <section
+        id="friendRequestsSection"
+        class="friend-requests-section"
+        hidden
+      >
+        <div class="friend-requests-heading">
+
+          <span>
+            Friend requests
+          </span>
+
+          <span
+            id="friendRequestsCount"
+            class="friend-requests-count"
+          >
+            0
+          </span>
+
+        </div>
+
+        <div
+          id="friendRequestsList"
+          class="friend-requests-list"
+        ></div>
+      </section>
+
       <div class="channel-category">
         <div class="channel-category-label">
           <span>Direct messages</span>
@@ -240,7 +267,7 @@
 <div class="modal-overlay" id="newDMModal">
   <div class="modal">
     <div class="modal-title">New message</div>
-    <input class="modal-input" type="text" placeholder="Search users..." id="newDMSearch" oninput="searchUsers(this.value)">
+    <input class="modal-input" type="text" placeholder="Enter exact username..." id="newDMSearch" oninput="searchUsers(this.value)">
     <div class="modal-results" id="newDMResults"></div>
     <div class="modal-btns">
       <button class="modal-btn cancel" onclick="closeNewDM()">Cancel</button>
@@ -514,49 +541,440 @@ async function initSignalR() {
 // Conversations
 async function loadConversations() {
   try {
-    var r = await fetch('/api/chat/conversations', {credentials:'include'});
-    var data = await r.json();
-    conversations = Array.isArray(data) ? data : [];
 
-    // ===== FIX: decrypt all sidebar previews =====
-    await Promise.all(conversations.map(async function(c) {
-      c.previewText = await getPreviewText(c);
-    }));
+    var responses = await Promise.all([
+
+      fetch(
+        '/api/chat/conversations',
+        {
+          credentials:
+            'include'
+        }
+      ),
+
+      fetch(
+        '/api/friends',
+        {
+          credentials:
+            'include'
+        }
+      )
+    ]);
+
+
+    var chatData =
+      await responses[0].json();
+
+
+    var friendsData = {
+      friends: []
+    };
+
+
+    if (
+      responses[1].ok
+    ) {
+
+      try {
+
+        friendsData =
+          await responses[1].json();
+
+      } catch (
+        error
+      ) {
+      }
+    }
+
+
+    var chatConversations =
+      Array.isArray(
+        chatData
+      )
+
+        ? chatData
+
+        : [];
+
+
+    var byPeer =
+      new Map();
+
+
+    chatConversations.forEach(
+      function (
+        conversation
+      ) {
+
+        var peer =
+          String(
+            conversation.peer
+            || ''
+          )
+            .trim();
+
+
+        if (
+          !peer
+        ) {
+
+          return;
+        }
+
+
+        conversation._sortTs =
+
+          conversation.ts
+
+          || conversation.timestamp
+
+          || '';
+
+
+        byPeer.set(
+
+          peer.toLowerCase(),
+
+          conversation
+        );
+      }
+    );
+
+
+    (
+      friendsData.friends
+      || []
+    )
+      .forEach(
+        function (
+          friend
+        ) {
+
+          var peer =
+            String(
+              friend.username
+              || ''
+            )
+              .trim();
+
+
+          var key =
+            peer.toLowerCase();
+
+
+          if (
+            !peer
+
+            || (
+              me
+              && key
+                === String(
+                  me.username
+                  || ''
+                )
+                  .toLowerCase()
+            )
+          ) {
+
+            return;
+          }
+
+
+          if (
+            byPeer.has(
+              key
+            )
+          ) {
+
+            return;
+          }
+
+
+          byPeer.set(
+
+            key,
+
+            {
+              peer:
+                peer,
+
+              text:
+                '',
+
+              previewText:
+                '',
+
+              ts:
+                '',
+
+              friendOnly:
+                true,
+
+              _sortTs:
+
+                friend.createdAt
+
+                || ''
+            }
+          );
+        }
+      );
+
+
+    conversations =
+      Array.from(
+        byPeer.values()
+      );
+
+
+    conversations.sort(
+      function (
+        a,
+        b
+      ) {
+
+        var first =
+          Date.parse(
+            a._sortTs
+            || ''
+          )
+
+          || 0;
+
+
+        var second =
+          Date.parse(
+            b._sortTs
+            || ''
+          )
+
+          || 0;
+
+
+        return second
+          - first;
+      }
+    );
+
+
+    await Promise.all(
+
+      conversations.map(
+
+        async function (
+          conversation
+        ) {
+
+          if (
+            conversation.friendOnly
+          ) {
+
+            conversation.previewText =
+              '';
+
+
+            return;
+          }
+
+
+          conversation.previewText =
+
+            await getPreviewText(
+              conversation
+            );
+        }
+      )
+    );
+
 
     renderConvList();
 
-    var peers = conversations.map(function(c){ return c.peer; }).filter(Boolean);
-    var toFetch = peers.filter(function(p){ return localStorage.getItem('rs_av_' + p) === null; });
 
-    var i = 0;
+    var peers =
+      conversations
+
+        .map(
+          function (
+            conversation
+          ) {
+
+            return conversation.peer;
+          }
+        )
+
+        .filter(
+          Boolean
+        );
+
+
+    var toFetch =
+      peers.filter(
+        function (
+          peer
+        ) {
+
+          return localStorage.getItem(
+            'rs_av_' + peer
+          ) === null;
+        }
+      );
+
+
+    var index =
+      0;
+
+
     function fetchNext() {
-      if (i >= toFetch.length) return;
-      var peer = toFetch[i++];
 
-      fetch('/api/profile/public/' + encodeURIComponent(peer), {credentials:'include'})
-        .then(function(rr){ return rr.json(); })
-        .then(function(d) {
-          var url = d.avatarUrl || '';
-          localStorage.setItem('rs_av_' + peer, url);
-          if (!window._avatarCache) window._avatarCache = {};
-          window._avatarCache[peer] = url || null;
+      if (
+        index >= toFetch.length
+      ) {
 
-          document.querySelectorAll('[data-user="' + peer + '"]').forEach(function(el) {
-            if (url) {
-              el.src = url;
-              el.style.opacity = '1';
-              el.onerror = function(){ makeAvatar(peer, el); };
-            } else {
-              makeAvatar(peer, el);
+        return;
+      }
+
+
+      var peer =
+        toFetch[
+          index++
+        ];
+
+
+      fetch(
+
+        '/api/profile/public/'
+        + encodeURIComponent(
+          peer
+        ),
+
+        {
+          credentials:
+            'include'
+        }
+      )
+
+        .then(
+          function (
+            response
+          ) {
+
+            return response.json();
+          }
+        )
+
+        .then(
+          function (
+            profile
+          ) {
+
+            var url =
+              profile.avatarUrl
+              || '';
+
+
+            localStorage.setItem(
+
+              'rs_av_'
+              + peer,
+
+              url
+            );
+
+
+            if (
+              !window._avatarCache
+            ) {
+
+              window._avatarCache =
+                {};
             }
-          });
-          setTimeout(fetchNext, 300);
-        })
-        .catch(function() { setTimeout(fetchNext, 300); });
+
+
+            window._avatarCache[
+              peer
+            ] =
+
+              url
+              || null;
+
+
+            document
+
+              .querySelectorAll(
+
+                '[data-user="'
+                + peer
+                + '"]'
+              )
+
+              .forEach(
+                function (
+                  element
+                ) {
+
+                  if (
+                    url
+                  ) {
+
+                    element.src =
+                      url;
+
+
+                    element.style.opacity =
+                      '1';
+
+
+                    element.onerror =
+                      function () {
+
+                        makeAvatar(
+                          peer,
+                          element
+                        );
+                      };
+
+
+                  } else {
+
+                    makeAvatar(
+                      peer,
+                      element
+                    );
+                  }
+                }
+              );
+
+
+            setTimeout(
+              fetchNext,
+              300
+            );
+          }
+        )
+
+        .catch(
+          function () {
+
+            setTimeout(
+              fetchNext,
+              300
+            );
+          }
+        );
     }
 
+
     fetchNext();
-  } catch(e) {}
+
+
+  } catch (
+    error
+  ) {
+
+    rsDebug(
+      'Could not load conversations and friends.'
+    );
+  }
 }
 
 function getConversationPreview(c) {
@@ -589,7 +1007,7 @@ function renderConvList(filter) {
       + '<span class="channel-icon">' + (avatarUrl ? ('<img src="' + esc(avatarUrl) + '" alt="" onerror="this.style.display=\'none\'">') : '●') + '</span>'
       + '<span class="channel-name">'
       + '<span style="display:block;color:var(--text-primary);font-weight:600">' + esc(peer) + '</span>'
-      + '<span style="display:block;font-size:11px;color:var(--text-muted);font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(text || (isOnline ? 'online' : 'No messages yet')) + '</span>'
+      + '<span style="display:block;font-size:11px;color:var(--text-muted);font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(text || (c.friendOnly ? 'New friend' : (isOnline ? 'online' : 'No messages yet'))) + '</span>'
       + '</span>'
       + (time ? '<span class="channel-badge" style="background:transparent;color:var(--text-muted);font-size:10px">' + time + '</span>' : '')
       + (isOnline ? '<span class="unread-dot" style="background:var(--status-online)"></span>' : '')
@@ -2602,6 +3020,10 @@ function showLiveCallPanel(ticketId, user) {
 })();
 </script>
 
+
+<script src="/chatt/friends-modal.js?v=20260710-friends-v5"></script>
+
+<script src="/chatt/friend-requests-sidebar.js?v=20260710-v2"></script>
 
 </body>
 </html>

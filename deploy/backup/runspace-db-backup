@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+umask 077
+
+DB="/var/lib/runspace/runspace.db"
+DEST="/var/backups/runspace"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+TMP="${DEST}/.runspace-${STAMP}.db.tmp"
+OUT="${DEST}/runspace-${STAMP}.db"
+
+install -d -m 0700 -o root -g root "$DEST"
+
+if [[ ! -r "$DB" ]]; then
+    echo "ERROR: Database is not readable: $DB" >&2
+    exit 1
+fi
+
+cleanup() {
+    rm -f "$TMP"
+}
+trap cleanup EXIT
+
+sqlite3 "$DB"             ".timeout 10000"             ".backup '$TMP'"
+
+RESULT="$(sqlite3 "$TMP" "PRAGMA integrity_check;")"
+
+if [[ "$RESULT" != "ok" ]]; then
+    echo "ERROR: Integrity check failed: $RESULT" >&2
+    exit 1
+fi
+
+mv "$TMP" "$OUT"
+trap - EXIT
+
+gzip -f "$OUT"
+sha256sum "${OUT}.gz" > "${OUT}.gz.sha256"
+
+find "$DEST" -type f             \( -name 'runspace-*.db.gz' -o -name 'runspace-*.db.gz.sha256' \)             -mtime +30             -delete
+
+echo "Created verified backup: ${OUT}.gz"

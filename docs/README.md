@@ -1,20 +1,19 @@
-# RunSpace Server Documentation
+# RunSpace Help
 
-This directory contains public technical documentation for the RunSpace server.
+Welcome to the RunSpace customer help center.
 
-## Contents
+These guides explain how to create and protect your account, communicate
+with other users and get help when something does not work.
 
-- [Architecture](architecture.md)
-- [Deployment](deployment.md)
-- [Operations](operations.md)
-- [Security](security.md)
-- [Troubleshooting](troubleshooting.md)
+## Help topics
 
-## Scope
+- [Getting started](getting-started.md)
+- [Accounts and security](accounts-and-security.md)
+- [Messages, groups and calls](messages-groups-and-calls.md)
+- [Temporary accounts and chats](temporary-accounts-and-chats.md)
+- [Privacy and safety](privacy-and-safety.md)
+- [Frequently asked questions](faq.md)
+- [Support](support.md)
 
-The documentation describes the application architecture and recommended
-operational procedures without exposing production secrets or private
-infrastructure details.
-
-Production credentials, databases, private keys, uploaded user data and
-environment configuration must never be committed.
+RunSpace is under active development. Some features may differ slightly
+between the web, desktop and Android versions.

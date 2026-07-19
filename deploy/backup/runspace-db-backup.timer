@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily RunSpace database backup
+
+[Timer]
+OnCalendar=*-*-* 03:17:00 UTC
+RandomizedDelaySec=10m
+Persistent=true
+Unit=runspace-db-backup.service
+
+[Install]
+WantedBy=timers.target

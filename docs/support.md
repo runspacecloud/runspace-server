@@ -12,7 +12,6 @@ Include:
 
 Do not include:
 
-- Passwords
 - Complete account keys
 - Two-factor authentication codes
 - Recovery codes

@@ -67,7 +67,6 @@ builder.Services.AddSingleton<RiskScoringEngine>();
 builder.Services.AddSingleton<ThreatIntelligence>();
 builder.Services.AddSingleton<HoneypotManager>();
 builder.Services.AddSingleton<EmergencyKillSwitch>();
-builder.Services.AddSingleton<PasswordBreachChecker>();
 builder.Services.AddSingleton<NonceManager>();
 builder.Services.AddSingleton<SessionAnomalyDetector>();
 builder.Services.AddHostedService<BehaviorRecoveryService>();
@@ -791,68 +790,13 @@ app.MapGet("/api/me", async (HttpContext ctx) =>
     });
 });
 
-app.MapPost("/api/auth/register", async (HttpContext ctx, IHttpClientFactory httpFactory) =>
-{
-    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
-    var threat = ctx.RequestServices.GetRequiredService<ThreatIntelligence>();
-    var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-    if (!limiter.IsAllowed(ip, "register", 3, 3600))
-    { threat.RecordStrike(ip, "register_abuse"); return Results.Json(new { message = "För många registreringsförsök. Vänta en timme." }, statusCode: 429); }
-    var req = await ctx.Request.ReadFromJsonAsync<LoginReq>();
-    if (req == null || string.IsNullOrWhiteSpace(req.Username) || string.IsNullOrWhiteSpace(req.Password))
-        return Results.BadRequest(new { message = "Username and password required" });
-    // Email honeypot removed — email now used for OTP
-    // Captcha replaced by trust engine signal scoring
-
-    // rs-auth-input-defensive-v1
-    var username = DefensiveInput.CleanString(req.Username, 32).ToLowerInvariant();
-    if (!DefensiveInput.IsUsername(username) || !AppHelpers.IsValidUsername(username))
-        return Results.BadRequest(new { message = "Ogiltigt användarnamn" });
-
-    if (!DefensiveInput.IsSafePasswordInput(req.Password))
-        return Results.BadRequest(new { message = "Ogiltigt lösenord." });
-
-    var email = DefensiveInput.CleanString(req.Email, 254).ToLowerInvariant();
-    if (!string.IsNullOrWhiteSpace(email) && !DefensiveInput.IsEmail(email))
-        return Results.BadRequest(new { message = "Ogiltig e-postadress." });
-
-    if (ReservedNames.IsReserved(username)) return Results.BadRequest(new { message = "Reserverat." });
-    if (ContentFilter.IsOffensive(username)) return Results.BadRequest(new { message = "Otillåtet användarnamn." });
-    var pwCheck = PasswordPolicy.Validate(req.Password);
-    if (!pwCheck.Valid) return Results.Json(new { status = "error", message = pwCheck.Message }, statusCode: 400);
-    if (ctx.RequestServices.GetRequiredService<PasswordBreachChecker>().IsBreached(req.Password))
-        return Results.BadRequest(new { message = "Lösenordet finns i dataläckor." });
-    using var db = DbHelpers.OpenDb();
-    using var exists = db.CreateCommand();
-    exists.CommandText = "SELECT COUNT(*) FROM AuthUsers WHERE Username = $u"; exists.Parameters.AddWithValue("$u", username);
-    if (Convert.ToInt32(exists.ExecuteScalar()) > 0) { await Task.Delay(RandomNumberGenerator.GetInt32(100, 300)); return Results.Json(new { status = "error", message = "Username already taken" }, statusCode: 409); }
-    var hash = PasswordHashing.HashPassword(req.Password);
-    var now = DateTime.UtcNow.ToString("o");
-    using var ins = db.CreateCommand();
-    ins.CommandText = @"INSERT INTO AuthUsers (Username,PasswordHash,Bio,AvatarUrl,CreatedAt,Status,Badges,PublicKey,TwoFactorEnabled,TwoFactorSecret,PasswordChangedAt,LoginCount,LastLoginAt,LastLoginIp,AccountLockedUntil,Email,PublicId)
-        VALUES ($u,$p,'','', $t,'pending','[]','',0,'',$t,0,'','','',$e,lower(hex(randomblob(16))))";
-
-    ins.Parameters.AddWithValue("$u", username); ins.Parameters.AddWithValue("$p", hash); ins.Parameters.AddWithValue("$t", now); ins.Parameters.AddWithValue("$e", email);
-    ins.ExecuteNonQuery();
-    PasswordHistory.Save(username, hash);
-    AppHelpers.LogActivity(username, "register", $"From {ip}");
-    if (!string.IsNullOrWhiteSpace(email))
-    {
-        var otpCode = OtpGenerator.GenerateCode();
-        var cacheKey = $"reg_otp:{username}";
-        OtpCache.Set(cacheKey, otpCode, TimeSpan.FromMinutes(15));
-        try { await SmtpMailService.SendOtpAsync(email, username, otpCode, "verify"); } catch { Console.WriteLine("[SMTP] send failed."); }
-        return Results.Ok(new { status = "otp_required", pendingToken = username, message = "Check your email for a verification code." });
-    }
-    return Results.Ok(new { status = "ok", redirect = "/chatt" });
-});
-
 UnlockEndpoint.Register(app);
 
 
 // rs-legacy-password-auth-block-v1
 var legacyPasswordAuthEndpoints = new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
 {
+    "/api/auth/register",
     "/api/auth/login",
     "/api/auth/forgot-password",
     "/api/auth/change-password",
@@ -876,130 +820,6 @@ app.Use(async (ctx, next) =>
     }
 
     await next();
-});
-
-app.MapPost("/api/auth/login", async (HttpContext ctx) =>
-{
-    var brute = ctx.RequestServices.GetRequiredService<BruteForceProtection>();
-    var sessionMgr = ctx.RequestServices.GetRequiredService<SessionManager>();
-    var risk = ctx.RequestServices.GetRequiredService<RiskScoringEngine>();
-    var geo = ctx.RequestServices.GetRequiredService<GeoAnomalyDetector>();
-    var devMgr = ctx.RequestServices.GetRequiredService<DeviceFingerprintManager>();
-    var threat = ctx.RequestServices.GetRequiredService<ThreatIntelligence>();
-    var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-    var ua = DefensiveInput.CleanString(ctx.Request.Headers.UserAgent.ToString(), 512);
-    var deviceFp = DefensiveInput.CleanString(ctx.Request.Headers["X-Device-Fingerprint"].ToString(), 256);
-    var req = await ctx.Request.ReadFromJsonAsync<LoginReq>();
-    if (req == null || string.IsNullOrWhiteSpace(req.Username) || string.IsNullOrWhiteSpace(req.Password))
-        return Results.BadRequest(new { message = "Krävs" });
-
-    // rs-login-input-defensive-v1
-    var username = DefensiveInput.CleanString(req.Username, 32).ToLowerInvariant();
-    var password = req.Password;
-
-    if (!DefensiveInput.IsUsername(username) || !AppHelpers.IsValidUsername(username))
-        return Results.BadRequest(new { message = "Ogiltigt användarnamn." });
-
-    if (!DefensiveInput.IsSafePasswordInput(password))
-        return Results.BadRequest(new { message = "Ogiltigt lösenord." });
-
-    if (brute.IsIpLocked(ip)) return Results.Json(new { message = "IP låst." }, statusCode: 429);
-    threat.RecordLoginAttempt(ip, username);
-    if (DecoyAccountManager.IsDecoy(username)) { threat.RecordStrike(ip, "decoy"); BCrypt.Net.BCrypt.HashPassword("timing"); return Results.Unauthorized(); }
-    if (brute.IsAccountLocked(username)) { await Task.Delay(brute.GetProgressiveDelay(username)); return Results.Unauthorized(); }
-    using var db = DbHelpers.OpenDb();
-    using var cmd = db.CreateCommand();
-    cmd.CommandText = "SELECT PasswordHash,Status,AccountLockedUntil,TwoFactorEnabled,TwoFactorSecret,LoginCount,LastLoginIp FROM AuthUsers WHERE Username=$u LIMIT 1";
-    cmd.Parameters.AddWithValue("$u", username);
-    using var r = cmd.ExecuteReader();
-    if (!r.Read()) { BCrypt.Net.BCrypt.HashPassword("timing"); brute.RecordFailedAttempt(ip, username); return Results.Unauthorized(); }
-    var hash = r.IsDBNull(0) ? "" : r.GetString(0);
-    var status = r.IsDBNull(1) ? "" : r.GetString(1);
-    var lockedStr = r.IsDBNull(2) ? "" : r.GetString(2);
-    var twoFa = !r.IsDBNull(3) && r.GetInt32(3) == 1;
-    var twoFaSecret = r.IsDBNull(4) ? "" : r.GetString(4);
-    var lastIp = r.IsDBNull(6) ? "" : r.GetString(6);
-    r.Close();
-    if (!string.IsNullOrWhiteSpace(lockedStr) && DateTime.TryParse(lockedStr, null, DateTimeStyles.RoundtripKind, out var locked) && locked > DateTime.UtcNow)
-        return Results.Json(new { message = "Kontot låst." }, statusCode: 423);
-    if (status?.Trim().Equals("banned", StringComparison.OrdinalIgnoreCase) == true)
-        return Results.Json(new { message = "Spärrat." }, statusCode: 403);
-    var passwordOk = false;
-    var shouldUpgradePasswordHash = false;
-
-    if (!string.IsNullOrWhiteSpace(hash))
-    {
-        passwordOk = PasswordHashing.VerifyPassword(password, hash);
-
-        // Temporary migration bridge:
-        // old accounts may have been hashed with the old default pepper or without pepper.
-        if (!passwordOk && PasswordHashing.VerifyDefaultPepperPassword(password, hash))
-        {
-            passwordOk = true;
-            shouldUpgradePasswordHash = true;
-            Console.WriteLine($"[AUTH] password_pipeline_v2 matched default-pepper legacy hash for {username}");
-        }
-
-        if (!passwordOk && PasswordHashing.VerifyLegacyPassword(password, hash))
-        {
-            passwordOk = true;
-            shouldUpgradePasswordHash = true;
-            Console.WriteLine($"[AUTH] password_pipeline_v2 matched no-pepper legacy hash for {username}");
-        }
-    }
-
-    if (!passwordOk)
-    {
-        Console.WriteLine("[AUTH] password_pipeline_v2 wrong_password");
-        brute.RecordFailedAttempt(ip, username); threat.RecordStrike(ip, "wrong_password");
-        if (brute.GetFailCount(username) >= 10) { using var lck = db.CreateCommand(); lck.CommandText = "UPDATE AuthUsers SET AccountLockedUntil=$l WHERE Username=$u"; lck.Parameters.AddWithValue("$l", DateTime.UtcNow.AddHours(1).ToString("o")); lck.Parameters.AddWithValue("$u", username); lck.ExecuteNonQuery(); }
-        return Results.Json(new { status = "error", message = "Incorrect credentials" }, statusCode: 401);
-    }
-
-    if (shouldUpgradePasswordHash)
-    {
-        using var uph = db.CreateCommand();
-        uph.CommandText = "UPDATE AuthUsers SET PasswordHash=$h, PasswordChangedAt=$ts WHERE Username=$u";
-        uph.Parameters.AddWithValue("$h", PasswordHashing.HashPassword(password));
-        uph.Parameters.AddWithValue("$ts", DateTime.UtcNow.ToString("o"));
-        uph.Parameters.AddWithValue("$u", username);
-        uph.ExecuteNonQuery();
-        Console.WriteLine($"[AUTH] password_pipeline_v2 upgraded legacy hash for {username}");
-    }
-
-    brute.ClearAttempts(ip, username);
-    var riskScore = risk.CalculateScore(username, ip, ua, deviceFp, lastIp);
-    geo.RecordLogin(username, ip);
-    if (geo.IsImpossibleTravel(username, ip)) riskScore += 15;
-    var isNewDevice = !devMgr.IsKnownDevice(username, deviceFp, ua);
-    if (isNewDevice) { riskScore += 10; devMgr.RegisterDevice(username, deviceFp, ua, ip); }
-    if (riskScore >= 95) return Results.Json(new { status = "blocked", message = "Access temporarily restricted", retryAfter = 300 }, statusCode: 403);
-    if (twoFa && !string.IsNullOrWhiteSpace(twoFaSecret))
-    {
-        var code = DefensiveInput.CleanString(req.TotpCode, 8);
-        if (string.IsNullOrWhiteSpace(code)) return Results.Ok(new { status = "otp_required", otpType = "totp", pendingToken = "", message = "Open your authenticator app and enter the code." });
-        if (!DefensiveInput.IsOtpCode(code)) return Results.Json(new { message = "Ogiltig 2FA-kod." }, statusCode: 401);
-        if (!TotpHelper.VerifyCode(twoFaSecret, code)) return Results.Json(new { message = "Ogiltig 2FA-kod." }, statusCode: 401);
-    }
-    // Create claims without SessionId first
-    var claims = new List<Claim> { new(ClaimTypes.Name, username), new(ClaimTypes.NameIdentifier, username) };
-    var props = new AuthenticationProperties { IsPersistent = true, ExpiresUtc = DateTimeOffset.UtcNow.AddDays(7), IssuedUtc = DateTimeOffset.UtcNow };
-    await ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, new ClaimsPrincipal(new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)), props);
-
-    // Sätt HttpOnly device-trust cookie – backend är ensam källa till trusted status
-    var deviceToken = DefensiveInput.CleanString(ctx.Request.Headers["X-Device-Token"].FirstOrDefault(), 256);
-    if (!string.IsNullOrWhiteSpace(deviceToken) && DefensiveInput.IsSafeToken(deviceToken, 256))
-    {
-        ctx.Response.Cookies.Append("rs-dt", deviceToken, new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Strict,
-            Path = "/",
-            MaxAge = TimeSpan.FromDays(30)
-        });
-    }
-    return Results.Ok(new { status = "ok", redirect = "/chatt", isAdmin = AppHelpers.IsAdmin(username), isNewDevice, riskScore });
 });
 
 app.MapPost("/api/auth/logout", async (HttpContext ctx) =>
@@ -1137,31 +957,6 @@ app.MapGet("/api/auth/check-username", async (string username, HttpContext ctx) 
     return Results.Ok(new { available = count == 0 });
 });
 
-app.MapPost("/api/auth/forgot-password", async (HttpContext ctx) =>
-{
-    var req = await ctx.Request.ReadFromJsonAsync<ForgotPasswordReq>();
-    if (req == null || string.IsNullOrWhiteSpace(req.Email)) return Results.Ok(new { status = "ok" });
-
-    // rs-forgot-password-input-defensive-v1
-    var emailInput = DefensiveInput.CleanString(req.Email, 254).ToLowerInvariant();
-    if (!DefensiveInput.IsEmail(emailInput)) return Results.Ok(new { status = "ok" });
-
-    using var db = DbHelpers.OpenDb();
-    using var cmd = db.CreateCommand();
-    cmd.CommandText = "SELECT Username, Email FROM AuthUsers WHERE Email = @e COLLATE NOCASE LIMIT 1";
-    cmd.Parameters.AddWithValue("@e", emailInput);
-    using var r = cmd.ExecuteReader();
-    if (r.Read())
-    {
-        var username = r.GetString(0);
-        var email = r.GetString(1);
-        r.Close();
-        var code = OtpGenerator.GenerateCode();
-        try { await SmtpMailService.SendOtpAsync(email, username, code, "reset"); } catch { Console.WriteLine("[SMTP] send failed."); }
-    }
-    return Results.Ok(new { status = "ok", message = "If an account exists, a reset link has been sent" });
-});
-
 app.MapPost("/api/auth/resend-otp", async (HttpContext ctx) =>
 {
     var req = await ctx.Request.ReadFromJsonAsync<ResendOtpReq>();
@@ -1290,62 +1085,6 @@ app.MapPost("/api/auth/email/verify", async (HttpContext ctx) =>
 
     AppHelpers.LogActivity(u, "email_verified", "Email verified via settings");
     return Results.Ok(new { message = "E-postadressen har verifierats." });
-});
-
-
-app.MapPost("/api/auth/change-password", async (HttpContext ctx) =>
-{
-    var u = ctx.User.Identity?.Name?.Trim().ToLowerInvariant();
-    if (string.IsNullOrWhiteSpace(u) || !AppHelpers.UserExists(u)) return Results.Unauthorized();
-
-    var limiter = ctx.RequestServices.GetRequiredService<RateLimiter>();
-    if (!limiter.IsAllowed(u, "change_password", 3, 3600)) return Results.Json(new { message = "Vänta." }, statusCode: 429);
-
-    var req = await ctx.Request.ReadFromJsonAsync<ChangeReq>();
-    if (req == null || string.IsNullOrWhiteSpace(req.OldPassword) || string.IsNullOrWhiteSpace(req.NewPassword))
-        return Results.BadRequest(new { message = "Alla fält krävs" });
-
-    // rs-change-password-defensive-v1
-    // Passwords must not be cleaned or trimmed. Only bound length/null bytes before BCrypt.
-    var oldPassword = req.OldPassword;
-    var newPassword = req.NewPassword;
-
-    if (!DefensiveInput.IsSafePasswordInput(oldPassword))
-        return Results.BadRequest(new { message = "Ogiltigt lösenord." });
-
-    if (!DefensiveInput.IsSafePasswordInput(newPassword))
-        return Results.BadRequest(new { message = "Ogiltigt lösenord." });
-
-    var check = PasswordPolicy.Validate(newPassword);
-    if (!check.Valid) return Results.BadRequest(new { message = check.Message });
-
-    if (oldPassword == newPassword) return Results.BadRequest(new { message = "Måste skilja sig." });
-
-    using var db = DbHelpers.OpenDb();
-    using var get = db.CreateCommand();
-    get.CommandText = "SELECT PasswordHash FROM AuthUsers WHERE Username=$u LIMIT 1";
-    get.Parameters.AddWithValue("$u", u);
-    var cur = get.ExecuteScalar() as string;
-
-    if (string.IsNullOrWhiteSpace(cur) || !PasswordHashing.VerifyPassword(oldPassword, cur))
-        return Results.BadRequest(new { message = "Gammalt lösenord fel" });
-
-    if (PasswordHistory.WasUsedBefore(u, newPassword + AppConfig.PasswordPepper))
-        return Results.BadRequest(new { message = "Använt tidigare." });
-
-    var newHash = PasswordHashing.HashPassword(newPassword);
-
-    using var upd = db.CreateCommand();
-    upd.CommandText = "UPDATE AuthUsers SET PasswordHash=$p, PasswordChangedAt=$t WHERE Username=$u";
-    upd.Parameters.AddWithValue("$p", newHash);
-    upd.Parameters.AddWithValue("$t", DateTime.UtcNow.ToString("o"));
-    upd.Parameters.AddWithValue("$u", u);
-    upd.ExecuteNonQuery();
-
-    PasswordHistory.Save(u, newHash);
-    ctx.RequestServices.GetRequiredService<SessionManager>().InvalidateAllSessions(u);
-
-    return Results.Ok(new { success = true, message = "Lösenordet ändrat." });
 });
 
 

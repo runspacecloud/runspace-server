@@ -4,7 +4,7 @@
 
 Do not publish or send information such as:
 
-- Passwords or account keys
+- Account keys
 - Home address
 - Financial information
 - Identity documents

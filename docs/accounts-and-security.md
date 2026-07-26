@@ -2,20 +2,17 @@
 
 ## Protect your account
 
-Use a unique password that you do not use for another service.
-
+Use backup codes
 Enable two-factor authentication when it is available for your account.
 
 Never share:
 
-- Your password
 - Your account key
 - Two-factor authentication codes
 - Recovery codes
 - Sign-in links intended only for you
 
-RunSpace support should never ask you to send your password or complete
-account key in a message.
+RunSpace support should never ask you to send your account key in a message.
 
 ## Account keys
 
@@ -45,6 +42,6 @@ Save any recovery information before leaving the setup screen.
 Contact support when you notice:
 
 - Sign-ins you do not recognize
-- Unexpected password or key changes
+- Key changes
 - Messages sent without your knowledge
 - Unknown devices connected to your account

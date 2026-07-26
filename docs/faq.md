@@ -2,8 +2,7 @@
 
 ## Why can I not sign in?
 
-Check that you are using the correct sign-in method and that your username,
-password or account key was entered correctly.
+Check that you are using the correct sign-in method and that your account key was entered correctly.
 
 Complete two-factor authentication or human verification when requested.
 
@@ -21,12 +20,12 @@ time is reached.
 Check microphone permission, your selected audio device, VPN settings and
 network connection.
 
-Some networks prevent direct voice connections.
+Some networks prevent direct voice connections and some browsers.
 
 ## Why can I not send a large file?
 
 RunSpace applies file-size and file-type restrictions for reliability and
-safety.
+safety. You can only upload 
 
 ## Can I recover a lost account key?
 

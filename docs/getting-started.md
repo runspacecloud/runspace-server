@@ -1,5 +1,11 @@
 # Getting started
 
+
+## Read terms, Community Rules & Policy
+
+Open https://runspace.cloud/privacy/, read everything there.
+Same goes for https://runspace.cloud/community-rules/ & https://runspace.cloud/term-of-service/
+
 ## Create an account
 
 Open the RunSpace registration page and follow the instructions shown on
